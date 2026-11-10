@@ -1,0 +1,1141 @@
+{
+  "$defs": {
+    "Condition": {
+      "additionalProperties": false,
+      "description": "Recursive three-state condition node (leaf, all, any, not).",
+      "properties": {
+        "all": {
+          "anyOf": [
+            {
+              "items": {
+                "$ref": "#/$defs/Condition"
+              },
+              "maxItems": 32,
+              "minItems": 1,
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "All"
+        },
+        "any": {
+          "anyOf": [
+            {
+              "items": {
+                "$ref": "#/$defs/Condition"
+              },
+              "maxItems": 32,
+              "minItems": 1,
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Any"
+        },
+        "bytes": {
+          "anyOf": [
+            {
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Bytes"
+        },
+        "duration_seconds": {
+          "anyOf": [
+            {
+              "maximum": 2592000,
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Duration Seconds"
+        },
+        "for_seconds": {
+          "anyOf": [
+            {
+              "maximum": 2592000,
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "For Seconds"
+        },
+        "gpu_uuid": {
+          "anyOf": [
+            {
+              "maxLength": 128,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Gpu Uuid"
+        },
+        "kind": {
+          "anyOf": [
+            {
+              "enum": [
+                "process_exited",
+                "process_tree_exited",
+                "log_contains",
+                "log_not_updated",
+                "file_exists_fresh",
+                "file_size_above",
+                "cpu_below",
+                "gpu_util_below",
+                "gpu_memory_above",
+                "elapsed_above"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Kind"
+        },
+        "mb": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0.0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Mb"
+        },
+        "not": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Condition"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "path": {
+          "anyOf": [
+            {
+              "maxLength": 4096,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Path"
+        },
+        "percent": {
+          "anyOf": [
+            {
+              "maximum": 100.0,
+              "minimum": 0.0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Percent"
+        },
+        "seconds": {
+          "anyOf": [
+            {
+              "maximum": 2592000,
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Seconds"
+        },
+        "value": {
+          "anyOf": [
+            {
+              "maxLength": 4096,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Value"
+        }
+      },
+      "title": "Condition",
+      "type": "object"
+    },
+    "Evidence": {
+      "additionalProperties": false,
+      "properties": {
+        "log": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/LogSpec"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "result_files": {
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 64,
+          "title": "Result Files",
+          "type": "array"
+        },
+        "run_directory": {
+          "maxLength": 4096,
+          "minLength": 1,
+          "title": "Run Directory",
+          "type": "string"
+        }
+      },
+      "required": [
+        "run_directory"
+      ],
+      "title": "Evidence",
+      "type": "object"
+    },
+    "FailureRule": {
+      "additionalProperties": false,
+      "properties": {
+        "all": {
+          "anyOf": [
+            {
+              "items": {
+                "$ref": "#/$defs/Condition"
+              },
+              "maxItems": 32,
+              "minItems": 1,
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "All"
+        },
+        "any": {
+          "anyOf": [
+            {
+              "items": {
+                "$ref": "#/$defs/Condition"
+              },
+              "maxItems": 32,
+              "minItems": 1,
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Any"
+        },
+        "bytes": {
+          "anyOf": [
+            {
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Bytes"
+        },
+        "duration_seconds": {
+          "anyOf": [
+            {
+              "maximum": 2592000,
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Duration Seconds"
+        },
+        "finalize": {
+          "default": "on_process_exit",
+          "enum": [
+            "immediate",
+            "on_process_exit"
+          ],
+          "title": "Finalize",
+          "type": "string"
+        },
+        "for_seconds": {
+          "anyOf": [
+            {
+              "maximum": 2592000,
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "For Seconds"
+        },
+        "gpu_uuid": {
+          "anyOf": [
+            {
+              "maxLength": 128,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Gpu Uuid"
+        },
+        "kind": {
+          "anyOf": [
+            {
+              "enum": [
+                "process_exited",
+                "process_tree_exited",
+                "log_contains",
+                "log_not_updated",
+                "file_exists_fresh",
+                "file_size_above",
+                "cpu_below",
+                "gpu_util_below",
+                "gpu_memory_above",
+                "elapsed_above"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Kind"
+        },
+        "mb": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0.0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Mb"
+        },
+        "not": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Condition"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "path": {
+          "anyOf": [
+            {
+              "maxLength": 4096,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Path"
+        },
+        "percent": {
+          "anyOf": [
+            {
+              "maximum": 100.0,
+              "minimum": 0.0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Percent"
+        },
+        "seconds": {
+          "anyOf": [
+            {
+              "maximum": 2592000,
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Seconds"
+        },
+        "value": {
+          "anyOf": [
+            {
+              "maxLength": 4096,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Value"
+        }
+      },
+      "title": "FailureRule",
+      "type": "object"
+    },
+    "LogSpec": {
+      "additionalProperties": false,
+      "properties": {
+        "encoding": {
+          "default": "utf-8",
+          "title": "Encoding",
+          "type": "string"
+        },
+        "path": {
+          "maxLength": 4096,
+          "minLength": 1,
+          "title": "Path",
+          "type": "string"
+        },
+        "scope": {
+          "const": "current_run",
+          "default": "current_run",
+          "title": "Scope",
+          "type": "string"
+        }
+      },
+      "required": [
+        "path"
+      ],
+      "title": "LogSpec",
+      "type": "object"
+    },
+    "NotificationSettings": {
+      "additionalProperties": false,
+      "properties": {
+        "on_accepted": {
+          "default": true,
+          "title": "On Accepted",
+          "type": "boolean"
+        },
+        "on_failure": {
+          "default": true,
+          "title": "On Failure",
+          "type": "boolean"
+        },
+        "on_interrupted": {
+          "default": true,
+          "title": "On Interrupted",
+          "type": "boolean"
+        },
+        "on_success": {
+          "default": true,
+          "title": "On Success",
+          "type": "boolean"
+        },
+        "on_unknown": {
+          "default": true,
+          "title": "On Unknown",
+          "type": "boolean"
+        },
+        "on_warning": {
+          "default": true,
+          "title": "On Warning",
+          "type": "boolean"
+        },
+        "progress_interval_minutes": {
+          "default": 30,
+          "maximum": 10080,
+          "minimum": 0,
+          "title": "Progress Interval Minutes",
+          "type": "integer"
+        },
+        "warning_repeat_minutes": {
+          "default": 30,
+          "maximum": 10080,
+          "minimum": 1,
+          "title": "Warning Repeat Minutes",
+          "type": "integer"
+        }
+      },
+      "title": "NotificationSettings",
+      "type": "object"
+    },
+    "RegisterRequest": {
+      "additionalProperties": false,
+      "properties": {
+        "evidence": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Evidence"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "expires_at": {
+          "format": "date-time",
+          "title": "Expires At",
+          "type": "string"
+        },
+        "notifications": {
+          "$ref": "#/$defs/NotificationSettings"
+        },
+        "operation": {
+          "const": "register",
+          "title": "Operation",
+          "type": "string"
+        },
+        "protocol": {
+          "const": "atw.task.v1",
+          "default": "atw.task.v1",
+          "title": "Protocol",
+          "type": "string"
+        },
+        "request_id": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+          "title": "Request Id",
+          "type": "string"
+        },
+        "revision": {
+          "const": 1,
+          "title": "Revision",
+          "type": "integer"
+        },
+        "rules": {
+          "$ref": "#/$defs/RulesSpec"
+        },
+        "target": {
+          "$ref": "#/$defs/Target"
+        },
+        "task": {
+          "$ref": "#/$defs/TaskMeta"
+        },
+        "task_id": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+          "title": "Task Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "operation",
+        "request_id",
+        "task_id",
+        "revision",
+        "expires_at",
+        "task",
+        "target",
+        "rules"
+      ],
+      "title": "RegisterRequest",
+      "type": "object"
+    },
+    "RulesSpec": {
+      "additionalProperties": false,
+      "properties": {
+        "failure": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/FailureRule"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "max_runtime_action": {
+          "default": "warn",
+          "enum": [
+            "warn",
+            "failed",
+            "unknown"
+          ],
+          "title": "Max Runtime Action",
+          "type": "string"
+        },
+        "max_runtime_seconds": {
+          "anyOf": [
+            {
+              "maximum": 31536000,
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Max Runtime Seconds"
+        },
+        "success": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Condition"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "warnings": {
+          "items": {
+            "$ref": "#/$defs/WarningRule"
+          },
+          "maxItems": 32,
+          "title": "Warnings",
+          "type": "array"
+        }
+      },
+      "title": "RulesSpec",
+      "type": "object"
+    },
+    "Target": {
+      "additionalProperties": false,
+      "properties": {
+        "cmdline_contains": {
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 32,
+          "title": "Cmdline Contains",
+          "type": "array"
+        },
+        "create_time_epoch": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Create Time Epoch"
+        },
+        "kind": {
+          "enum": [
+            "pid",
+            "match"
+          ],
+          "title": "Kind",
+          "type": "string"
+        },
+        "match_mode": {
+          "const": "unique",
+          "default": "unique",
+          "title": "Match Mode",
+          "type": "string"
+        },
+        "name": {
+          "anyOf": [
+            {
+              "maxLength": 512,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Name"
+        },
+        "pid": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Pid"
+        },
+        "tree": {
+          "$ref": "#/$defs/TreeSpec"
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "title": "Target",
+      "type": "object"
+    },
+    "TaskMeta": {
+      "additionalProperties": false,
+      "properties": {
+        "description": {
+          "anyOf": [
+            {
+              "maxLength": 2000,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Description"
+        },
+        "name": {
+          "maxLength": 256,
+          "minLength": 1,
+          "title": "Name",
+          "type": "string"
+        },
+        "project": {
+          "anyOf": [
+            {
+              "maxLength": 256,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Project"
+        },
+        "run_started_at": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Run Started At"
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "title": "TaskMeta",
+      "type": "object"
+    },
+    "TreeSpec": {
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "default": true,
+          "title": "Enabled",
+          "type": "boolean"
+        }
+      },
+      "title": "TreeSpec",
+      "type": "object"
+    },
+    "UpdateChanges": {
+      "additionalProperties": false,
+      "properties": {
+        "evidence": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Evidence"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "notifications": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/NotificationSettings"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "rules": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/RulesSpec"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "task": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/TaskMeta"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "title": "UpdateChanges",
+      "type": "object"
+    },
+    "UpdateRequest": {
+      "additionalProperties": false,
+      "properties": {
+        "changes": {
+          "$ref": "#/$defs/UpdateChanges"
+        },
+        "expected_revision": {
+          "maximum": 2147483647,
+          "minimum": 1,
+          "title": "Expected Revision",
+          "type": "integer"
+        },
+        "expires_at": {
+          "format": "date-time",
+          "title": "Expires At",
+          "type": "string"
+        },
+        "operation": {
+          "const": "update",
+          "title": "Operation",
+          "type": "string"
+        },
+        "protocol": {
+          "const": "atw.task.v1",
+          "default": "atw.task.v1",
+          "title": "Protocol",
+          "type": "string"
+        },
+        "request_id": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+          "title": "Request Id",
+          "type": "string"
+        },
+        "revision": {
+          "maximum": 2147483647,
+          "minimum": 2,
+          "title": "Revision",
+          "type": "integer"
+        },
+        "task_id": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+          "title": "Task Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "operation",
+        "request_id",
+        "task_id",
+        "revision",
+        "expected_revision",
+        "expires_at",
+        "changes"
+      ],
+      "title": "UpdateRequest",
+      "type": "object"
+    },
+    "WarningRule": {
+      "additionalProperties": false,
+      "properties": {
+        "all": {
+          "anyOf": [
+            {
+              "items": {
+                "$ref": "#/$defs/Condition"
+              },
+              "maxItems": 32,
+              "minItems": 1,
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "All"
+        },
+        "any": {
+          "anyOf": [
+            {
+              "items": {
+                "$ref": "#/$defs/Condition"
+              },
+              "maxItems": 32,
+              "minItems": 1,
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Any"
+        },
+        "bytes": {
+          "anyOf": [
+            {
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Bytes"
+        },
+        "duration_seconds": {
+          "anyOf": [
+            {
+              "maximum": 2592000,
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Duration Seconds"
+        },
+        "for_seconds": {
+          "anyOf": [
+            {
+              "maximum": 2592000,
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "For Seconds"
+        },
+        "gpu_uuid": {
+          "anyOf": [
+            {
+              "maxLength": 128,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Gpu Uuid"
+        },
+        "id": {
+          "maxLength": 64,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9._-]+$",
+          "title": "Id",
+          "type": "string"
+        },
+        "kind": {
+          "anyOf": [
+            {
+              "enum": [
+                "process_exited",
+                "process_tree_exited",
+                "log_contains",
+                "log_not_updated",
+                "file_exists_fresh",
+                "file_size_above",
+                "cpu_below",
+                "gpu_util_below",
+                "gpu_memory_above",
+                "elapsed_above"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Kind"
+        },
+        "mb": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0.0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Mb"
+        },
+        "message": {
+          "anyOf": [
+            {
+              "maxLength": 512,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Message"
+        },
+        "not": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Condition"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "path": {
+          "anyOf": [
+            {
+              "maxLength": 4096,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Path"
+        },
+        "percent": {
+          "anyOf": [
+            {
+              "maximum": 100.0,
+              "minimum": 0.0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Percent"
+        },
+        "seconds": {
+          "anyOf": [
+            {
+              "maximum": 2592000,
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Seconds"
+        },
+        "value": {
+          "anyOf": [
+            {
+              "maxLength": 4096,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Value"
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "title": "WarningRule",
+      "type": "object"
+    }
+  },
+  "$id": "https://atw.local/schemas/task-v1.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "discriminator": {
+    "mapping": {
+      "register": "#/$defs/RegisterRequest",
+      "update": "#/$defs/UpdateRequest"
+    },
+    "propertyName": "operation"
+  },
+  "oneOf": [
+    {
+      "$ref": "#/$defs/RegisterRequest"
+    },
+    {
+      "$ref": "#/$defs/UpdateRequest"
+    }
+  ],
+  "title": "ATW AFHP/1 task request (atw.task.v1)"
+}

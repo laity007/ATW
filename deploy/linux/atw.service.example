@@ -1,0 +1,24 @@
+# ATW per-user systemd unit (V1).
+# Copy to ~/.config/systemd/user/atw.service and replace @@ placeholders, or run
+# deploy/linux/install.sh which generates it with absolute paths.
+[Unit]
+Description=Agent Task Watcher (ATW) local task supervisor
+Documentation=https://github.com/example/agent-task-watcher
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=@@PROJECT_ROOT@@
+Environment=ATW_HOME=@@ATW_HOME@@
+Environment=PYTHONUNBUFFERED=1
+EnvironmentFile=-%h/.config/atw/atw.env
+ExecStart=@@PYTHON@@ -m atw --home @@ATW_HOME@@ service run
+Restart=always
+RestartSec=10
+KillSignal=SIGTERM
+TimeoutStopSec=30
+NoNewPrivileges=true
+
+[Install]
+WantedBy=default.target

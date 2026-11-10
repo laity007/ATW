@@ -1,0 +1,21 @@
+{
+  "protocol": "atw.task.v1",
+  "operation": "update",
+  "request_id": "req-20261109-cfd-002",
+  "task_id": "cfd-20261109-001",
+  "revision": 2,
+  "expected_revision": 1,
+  "expires_at": "2026-11-09T23:30:00Z",
+  "changes": {
+    "notifications": {
+      "on_accepted": true,
+      "on_success": true,
+      "on_failure": true,
+      "on_unknown": true,
+      "on_interrupted": true,
+      "on_warning": true,
+      "progress_interval_minutes": 60,
+      "warning_repeat_minutes": 30
+    }
+  }
+}

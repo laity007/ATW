@@ -1,0 +1,59 @@
+{
+  "protocol": "atw.task.v1",
+  "operation": "register",
+  "request_id": "req-20261109-match-001",
+  "task_id": "match-20261109-001",
+  "revision": 1,
+  "expires_at": "2026-11-09T23:30:00Z",
+  "task": {
+    "name": "训练任务（名称+命令行唯一匹配）",
+    "project": "llm-pretrain",
+    "run_started_at": "2026-11-09T20:10:00Z"
+  },
+  "target": {
+    "kind": "match",
+    "name": "python",
+    "cmdline_contains": ["train.py", "--run-id", "run001"],
+    "match_mode": "unique",
+    "tree": {"enabled": true}
+  },
+  "evidence": {
+    "run_directory": "/home/simrunner/project/runs/run001",
+    "log": {
+      "path": "/home/simrunner/project/runs/run001/run.log",
+      "scope": "current_run",
+      "encoding": "utf-8"
+    },
+    "result_files": ["/home/simrunner/project/runs/run001/results/checkpoint.pt"]
+  },
+  "rules": {
+    "success": {
+      "all": [
+        {"kind": "process_tree_exited"},
+        {"kind": "log_contains", "value": "TRAINING COMPLETE"},
+        {"kind": "file_exists_fresh", "path": "/home/simrunner/project/runs/run001/results/checkpoint.pt"}
+      ]
+    },
+    "failure": {
+      "any": [
+        {"kind": "log_contains", "value": "RuntimeError"},
+        {"kind": "log_contains", "value": "CUDA error"}
+      ],
+      "finalize": "on_process_exit"
+    },
+    "warnings": [
+      {"id": "gpu-mem", "kind": "gpu_memory_above", "mb": 22000, "duration_seconds": 300}
+    ],
+    "max_runtime_seconds": 86400
+  },
+  "notifications": {
+    "on_accepted": true,
+    "on_success": true,
+    "on_failure": true,
+    "on_unknown": true,
+    "on_interrupted": true,
+    "on_warning": true,
+    "progress_interval_minutes": 60,
+    "warning_repeat_minutes": 60
+  }
+}

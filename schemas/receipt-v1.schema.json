@@ -1,0 +1,128 @@
+{
+  "$defs": {
+    "BoundProcess": {
+      "additionalProperties": false,
+      "properties": {
+        "create_time_epoch": {
+          "exclusiveMinimum": 0,
+          "title": "Create Time Epoch",
+          "type": "number"
+        },
+        "pid": {
+          "exclusiveMinimum": 0,
+          "title": "Pid",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "pid",
+        "create_time_epoch"
+      ],
+      "title": "BoundProcess",
+      "type": "object"
+    },
+    "ReceiptError": {
+      "additionalProperties": false,
+      "properties": {
+        "code": {
+          "title": "Code",
+          "type": "string"
+        },
+        "message": {
+          "title": "Message",
+          "type": "string"
+        }
+      },
+      "required": [
+        "code",
+        "message"
+      ],
+      "title": "ReceiptError",
+      "type": "object"
+    }
+  },
+  "$id": "https://atw.local/schemas/receipt-v1.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "accepted_at": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Accepted At"
+    },
+    "bound_process": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/BoundProcess"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "error": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/ReceiptError"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "message": {
+      "default": "",
+      "title": "Message",
+      "type": "string"
+    },
+    "monitoring": {
+      "title": "Monitoring",
+      "type": "boolean"
+    },
+    "protocol": {
+      "const": "atw.receipt.v1",
+      "default": "atw.receipt.v1",
+      "title": "Protocol",
+      "type": "string"
+    },
+    "request_id": {
+      "title": "Request Id",
+      "type": "string"
+    },
+    "revision": {
+      "title": "Revision",
+      "type": "integer"
+    },
+    "status": {
+      "enum": [
+        "accepted",
+        "rejected"
+      ],
+      "title": "Status",
+      "type": "string"
+    },
+    "task_id": {
+      "title": "Task Id",
+      "type": "string"
+    }
+  },
+  "required": [
+    "request_id",
+    "task_id",
+    "revision",
+    "status",
+    "monitoring"
+  ],
+  "title": "ATW AFHP/1 receipt (atw.receipt.v1)",
+  "type": "object"
+}

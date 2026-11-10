@@ -1,0 +1,62 @@
+# ATW V1.0 global configuration example.
+# Copy to <ATW_HOME>/config/config.yaml (default home:
+#   Linux:   ~/.local/share/atw
+#   Windows: %LOCALAPPDATA%\ATW
+# Never put the DingTalk webhook or secret in this file. They are read from the
+# environment variables named below (or from a protected, git-ignored env file).
+
+instance_id: B-Linux-01
+node_label: B-Linux / RTX 3090
+
+# Fallback scan (watchdog notifications also trigger intake).
+scan_interval_seconds: 5
+sample_interval_seconds: 10
+outbox_interval_seconds: 2
+finalize_grace_seconds: 15
+
+# Local timezone for daily health summaries; omit/empty uses the system zone.
+timezone: Asia/Shanghai
+
+# Evidence files and logs must resolve inside one of these roots.
+allowed_read_roots:
+  - /home/simrunner
+  - /tmp
+  # - /data/projects
+# Windows example:
+# allowed_read_roots:
+#   - C:\Users\simrunner
+#   - D:\simulation
+
+max_json_bytes: 262144
+max_rule_depth: 8
+process_create_time_tolerance_seconds: 0.05
+retention_days: 30
+max_log_scan_bytes: 8388608
+log_read_chunk_bytes: 1048576
+
+notification:
+  # auto -> DingTalk when the webhook env is present, otherwise mock.
+  provider: auto
+  webhook_env: ATW_DINGTALK_WEBHOOK
+  secret_env: ATW_DINGTALK_SECRET
+  keyword: ATW
+  rate_limit_per_minute: 15
+  retry_base_seconds: 2
+  retry_max_seconds: 3600
+  max_attempts: 0          # 0 = retry forever (persisted), 0 recommended
+  timeout_seconds: 10
+
+health_summary:
+  enabled: false
+  time: "08:00"
+  # timezone: Asia/Shanghai
+
+paths:
+  # Optional subdirectory overrides below ATW_HOME. Leave empty for defaults.
+  inbox: null
+  accepted: null
+  rejected: null
+  archive: null
+  receipts: null
+  data: null
+  logs: null

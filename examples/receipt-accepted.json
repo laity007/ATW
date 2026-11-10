@@ -1,0 +1,14 @@
+{
+  "protocol": "atw.receipt.v1",
+  "request_id": "req-20261109-cfd-001",
+  "task_id": "cfd-20261109-001",
+  "revision": 1,
+  "status": "accepted",
+  "monitoring": true,
+  "bound_process": {
+    "pid": 12345,
+    "create_time_epoch": 1794254400.125
+  },
+  "accepted_at": "2026-11-09T20:01:00Z",
+  "message": "已接管该计算任务的监督"
+}

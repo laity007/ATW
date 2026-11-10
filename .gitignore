@@ -1,0 +1,53 @@
+# --- ATW secrets: never commit ---
+key.txt
+webhook.txt
+*.secret
+secrets.env
+.env
+.env.*
+config.local.yaml
+atw-secrets/
+
+# --- runtime state / ATW home ---
+ATW_HOME/
+atw-home/
+*.db
+*.db-wal
+*.db-shm
+*.lock
+receipts/
+tasks/inbox/
+tasks/accepted/
+tasks/rejected/
+tasks/archive/
+logs/
+mock_notifications.jsonl
+
+# --- Python ---
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+.mypy_cache/
+
+# --- packaging / OS ---
+*.spec.bak
+*.exe
+*.msi
+*.AppImage
+!deploy/**/*.ps1
+.DS_Store
+Thumbs.db
+
+# --- local test artifacts ---
+tests/_tmp/
+tests/_artifacts/
+*.log

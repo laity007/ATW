@@ -47,8 +47,10 @@ dev = [
 atw = "atw.cli.app:main"
 
 [project.urls]
-Homepage = "https://github.com/example/agent-task-watcher"
-Documentation = "https://github.com/example/agent-task-watcher/tree/main/docs"
+Homepage = "https://github.com/laity007/ATW"
+Repository = "https://github.com/laity007/ATW"
+Documentation = "https://github.com/laity007/ATW/tree/main/docs"
+Issues = "https://github.com/laity007/ATW/issues"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/atw"]

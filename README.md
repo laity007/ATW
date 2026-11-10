@@ -140,6 +140,7 @@ ATW_HOME/
 - [Windows 部署](docs/deployment-windows.md)
 - [安全与隐私](docs/security.md)
 - [验收记录](docs/acceptance.md)
+- [发行构建](docs/release.md)
 - [FAQ / 故障排查](docs/faq.md)
 
 ## 安全

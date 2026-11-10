@@ -38,7 +38,7 @@ ATW 是一个**零大模型调用**的本地计算任务监督程序：AI Agent 
 ### 1. 安装（源码版）
 
 ```bash
-git clone <repo-url> agent-task-watcher
+git clone https://github.com/laity007/ATW.git agent-task-watcher
 cd agent-task-watcher
 python -m venv .venv
 . .venv/bin/activate            # Windows: .venv\Scripts\activate

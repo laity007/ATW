@@ -51,3 +51,6 @@ Thumbs.db
 tests/_tmp/
 tests/_artifacts/
 *.log
+
+# Local development transcript (connection metadata; not for publication)
+docs/deepseek_session.md

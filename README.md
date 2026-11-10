@@ -154,4 +154,4 @@ ATW_HOME/
 
 ## 许可证
 
-MIT（默认提案；发布前由项目维护者确认）。见 [LICENSE](LICENSE)。
+MIT，见 [LICENSE](LICENSE)。

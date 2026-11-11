@@ -13,7 +13,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest]
+        # Build/test on the oldest supported Ubuntu LTS so the glibc-linked
+        # PyInstaller binary runs on Ubuntu 22.04 (glibc 2.35), not only 24.04.
+        os: [ubuntu-22.04, windows-latest]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -33,7 +35,7 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: ubuntu-latest
+          - os: ubuntu-22.04
             artifact: atw-linux-x86_64
           - os: windows-latest
             artifact: atw-windows-x86_64

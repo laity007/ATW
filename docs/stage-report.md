@@ -79,6 +79,8 @@ Completed:
 | Windows/Linux one-file binaries | version/doctor/service smoke passed |
 | Real DingTalk | `ok=true, channel=dingtalk`; user confirmed |
 | Real Linux handoffs | both paths, one path, defaults, rejected, SSH disconnect, crash recovery |
+| GitHub Actions v1.0.0 | Windows/Ubuntu tests, both executables and release job **success** |
+| Published assets | `atw.exe` and `atw` downloaded, `--version`/`doctor`/service smoke passed; Linux asset verified on Ubuntu 22.04 |
 
 ## Previously environment-limited — now closed by maintainer acceptance
 
@@ -93,10 +95,20 @@ Completed:
 3. No physical GPU-less host and no AMD/Intel GPU; degradation is unit-tested
    and Windows WDDM real hardware exercised UNKNOWN paths.
 
-## Next actions
+## Release outcome
 
-- Tag `v1.0.0` after this acceptance commit; GitHub Actions builds/tests and
-  creates the Release.
+- `v1.0.0` tag and public Release published:
+  <https://github.com/laity007/ATW/releases/tag/v1.0.0>
+- GitHub Actions run 42968507644: Windows + Ubuntu tests, both executable
+  builds, release job all successful.
+- Post-release verification found the first Linux asset (built on
+  `ubuntu-latest`/24.04) required `GLIBC_2.38` and failed on Ubuntu 22.04. It
+  was replaced with a binary built on **Ubuntu 22.04** via a one-off workflow;
+  the replacement asset passes `--version`, `doctor` and clean `service run` on
+  the C2 Ubuntu 22.04 host. `release.yml` now pins `ubuntu-22.04` for future
+  releases.
 - Maintainer confirmed MIT (README/license updated in `b2e903f`).
-- Rotate and update the DingTalk webhook after the pre-release log-redaction
-  fix (maintainer confirmed completion).
+- DingTalk webhook was rotated after the pre-release log-redaction fix;
+  `05a4266` suppresses HTTP-client URL logging and adds a secret filter.
+
+No blocking work remains; monitor future issue reports.

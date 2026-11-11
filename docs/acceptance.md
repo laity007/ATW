@@ -40,6 +40,8 @@ Python upgrade and no root service installation.
 | Windows bundled exe | `atw.exe --version`, `doctor --json`, `service run --max-seconds 2` | passed |
 | Linux bundled binary | `atw --version`, `doctor --json`, `service run --max-seconds 2` | passed |
 | Real DingTalk | `atw notify test --json` with user-provided webhook/secret | `{"ok": true, "channel": "dingtalk"}` |
+| GitHub Actions v1.0.0 | run 42968507644 (Windows + Ubuntu test, both executables, release) | all jobs success |
+| Published Linux asset | downloaded v1.0.0 `atw`; `--version`, `doctor`, `service run` on Ubuntu 22.04 | works after the Ubuntu 22.04 rebuild |
 
 The Windows GPU test is skipped only for the per-process memory value
 (NVML returns `None` on this WDDM driver); device discovery and process
@@ -227,3 +229,8 @@ systemctl --user status atw
 
 Artifacts from the live handoffs are in `tests/_artifacts/` locally (git
 ignored) and the remote `~/atw-runs/` directories; secrets are not included.
+
+Published release: <https://github.com/laity007/ATW/releases/tag/v1.0.0>.
+The Linux asset was rebuilt on Ubuntu 22.04 after the initial CI build required
+`GLIBC_2.38`; see [`release.md`](release.md) for asset hashes and the
+`release.yml` runner pin.

@@ -32,6 +32,8 @@ ATW 是一个**零大模型调用**的本地计算任务监督程序：AI Agent 
 - 两项环境受限验收已由维护者在**独立目标机**完成：Windows AtStartup 无登录
   启动、Linux 物理重启后的 systemd 自动恢复；原始日志未随工作区提供，按
   maintainer attestation 记录。详见 [`docs/acceptance.md`](docs/acceptance.md)。
+- 正式发布：[GitHub Release v1.0.0](https://github.com/laity007/ATW/releases/tag/v1.0.0)；
+  Linux 资产在 Ubuntu 22.04（glibc 2.35）上完成启动验证。
 
 ## 快速开始
 

@@ -27,11 +27,11 @@ ATW 是一个**零大模型调用**的本地计算任务监督程序：AI Agent 
 - Ubuntu 22.04：`117 passed`（含真实 RTX 3090 NVML 进程显存测试）。
 - 真实 Linux 交接：显式双路径、仅日志路径、双默认路径、rejected 回执、
   SSH 断开后继续监控、systemd `kill -9` 后自动恢复，均已实测。
-- 真实钉钉测试消息发送成功（`ok=true, channel=dingtalk`）。
-- 因环境权限/共享主机限制，**Windows Task Scheduler 的 AtStartup 无登录启动
-  与物理重启**未实测（`NOT_VERIFIED`）；Linux 实际重启未执行，但 systemd
-  单元、linger、崩溃重启与 SSH 退出独立性已实测。详见
-  [`docs/acceptance.md`](docs/acceptance.md)。
+- 真实钉钉测试消息发送成功（`ok=true, channel=dingtalk`），旧 webhook token
+  已在日志脱敏修复后轮换。
+- 两项环境受限验收已由维护者在**独立目标机**完成：Windows AtStartup 无登录
+  启动、Linux 物理重启后的 systemd 自动恢复；原始日志未随工作区提供，按
+  maintainer attestation 记录。详见 [`docs/acceptance.md`](docs/acceptance.md)。
 
 ## 快速开始
 

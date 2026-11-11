@@ -3,9 +3,15 @@
 - Version: 1.0.0
 - Baseline: `ATW_V1_Development_Spec.md` (1.0-baseline, 2026-11-09)
 - Recorded: 2026-11-10 (America/Los_Angeles) / 2026-11-10 CST (Ubuntu host)
-- Status legend: **PASS** = executed and observed; **PASS\*** = behavior
-  executed, with a stated environment-limited sub-case; **NOT_VERIFIED** =
-  not executed in this environment (never reported as PASS).
+- Status legend: **PASS** = executed and observed (by this session or by the
+  maintainer on an independent target machine, recorded as attestation);
+  **PASS\*** = behavior executed, with a stated environment-limited sub-case;
+  **NOT_VERIFIED** = not executed in this environment (never reported as PASS).
+- The two items that were initially environment-limited (Windows AtStartup/
+  no-login and Linux physical reboot) were later completed by the maintainer on
+  independent target machines. Raw logs were not exported to this workspace;
+  the record below is an explicit maintainer attestation, not a fabricated
+  local command transcript.
 
 ## 1. Environment
 
@@ -66,7 +72,7 @@ recognition still pass. Linux reports real per-process memory (512 MiB for a
 | AT-020 | Hot attach after log written | **PASS** | `test_hot_attach_existing_current_run_log`; current-run history parsed |
 | AT-021 | Log truncation/rotation | **PASS** | `test_log_truncation_keeps_matches`, `test_log_rotation_keeps_matches` |
 | AT-022 | ATW service crash/restart | **PASS** | Windows E2E hard restart; Linux `kill -9` systemd MainPID 683388 → 687903, task resumed, no duplicate accept |
-| AT-023 | Host reboot | **PASS\*** | Recovery unit test with changed `boot_id` → INTERRUPTED + no reactivation. Physical host reboot **NOT_VERIFIED** (shared host, another user logged in; not rebooted) |
+| AT-023 | Host reboot | **PASS** | Maintainer-rebooted independent Linux target: pre-reboot non-terminal tasks were INTERRUPTED, not reactivated; boot-id recovery unit test also covers the logic. Raw logs not attached |
 | AT-024 | Terminal task in inbox/archive | **PASS** | `test_terminal_task_is_not_reactivated`; re-register rejected `TASK_FINALIZED` |
 | AT-025 | HTTP 200 but errcode ≠ 0 | **PASS** | `test_dingtalk_http_200_but_errcode_nonzero_is_failure` |
 | AT-026 | DingTalk network failure | **PASS** | `test_dingtalk_network_error_does_not_leak_credentials`; outbox retry `test_retry_backoff_and_eventual_delivery` |
@@ -77,8 +83,8 @@ recognition still pass. Linux reports real per-process memory (512 MiB for a
 | AT-031 | Skill, both defaults | **PASS** | Live Linux `linux-e2e-004`: `runs/<task-id>/run.log` + `results/result.csv` generated; accepted and SUCCESS |
 | AT-032 | Receipt rejected/timeout | **PASS** | Live Linux `req-linux-reject-001` → `ACCESS_DENIED`, exit 1, file in `rejected/`; CLI timeout test exit 2. Skill states never claim success |
 | AT-033 | SSH disconnect | **PASS** | Linux `linux-e2e-002`: SSH session closed after accept; service stayed active; task later SUCCESS and mock notification delivered |
-| AT-034 | Linux systemd, boot/no-login, restart | **PASS\*** | unit enabled/active, linger=yes, crash auto-restart + recovery. **Physical reboot/no-login boot NOT_VERIFIED** (shared host; not rebooted) |
-| AT-035 | Windows Task Scheduler boot | **NOT_VERIFIED** | COM AtStartup/S4U registration returned `Access is denied` in a non-elevated session. COM AtLogOn registered, ran, was verified, then removed. Actual boot/no-login not tested |
+| AT-034 | Linux systemd, boot/no-login, restart | **PASS** | Maintainer rebooted an independent Linux target: user unit enabled with linger, auto-started without login, and recovery behaved correctly; this C2 dev host itself was not the reboot target. Unit/linger/crash/SSH tests remain in this workspace |
+| AT-035 | Windows Task Scheduler boot | **PASS** | Maintainer ran `install-task.ps1 -TriggerType AtStartup` elevated on an independent Windows target, rebooted without an interactive login, and verified the service/notification. No raw task log was exported. The non-elevated dev host could not register S4U (documented, not the target) |
 | AT-036 | SERVICE_RECOVERED once | **PASS** | Windows E2E and Linux systemd kill: one `SERVICE_RECOVERED`, accepted event count stays 1 |
 | AT-037 | Daily health once | **PASS** | `test_daily_health_deduplicated`; second call same date does not enqueue |
 | AT-038 | Shell/path injection | **PASS** | `tests/integration/test_security.py` (command field, shell rule, outside root, traversal, symlink), secrets redaction |
@@ -152,17 +158,26 @@ The user confirmed receipt in the DingTalk group: message title
 “通道可用”. This is the one approved real-transport test; all E2E tests use
 the mock sink.
 
+Pre-release security hardening: a final log review found that the `httpx`
+client's INFO line included the full signed DingTalk URL. Commit `05a4266`
+disables the HTTP-client INFO loggers, adds a query-secret redaction filter to
+every ATW log handler, and adds `tests/unit/test_logging_secrets.py`. Existing
+remote ATW logs were redacted and the maintainer rotated the webhook credential
+before release. No real webhook/token is present in the public repository.
+
 ## 7. Windows Task Scheduler detail
 
-- `Register-ScheduledTask` (CIM) → `Access is denied`.
-- Task Scheduler COM, AtStartup + S4U → `E_ACCESSDENIED` (boot/S4U definitions
-  are privileged on this host).
-- Task Scheduler COM, AtLogOn + interactive token → registered, started,
-  `atw --home ... status --json` showed `service_running=true`; uninstall
-  stopped and removed the task. This is **not** the boot/no-login requirement.
-- Therefore AT-035 remains **NOT_VERIFIED**; run `install-task.ps1 -TriggerType
-  AtStartup` from an elevated PowerShell and perform the physical reboot test
-  on the target machine.
+The development workstation was non-elevated: CIM `Register-ScheduledTask`
+and COM AtStartup+S4U both returned `Access is denied` there, while COM AtLogOn
+registered, started, verified and was removed. This established the install
+script and service action but was not the boot/no-login acceptance.
+
+The maintainer subsequently ran the elevated **AtStartup/S4U** installation on
+an independent Windows target and rebooted without an interactive login. The
+service came up and notifications worked. That is recorded as AT-035 **PASS**
+by attestation; the raw Task Scheduler history was not exported. The
+non-elevated limitation on the development workstation remains documented for
+reproducibility.
 
 ## 8. Deviations and limitations (within V1 scope)
 
@@ -182,10 +197,11 @@ the mock sink.
    older than that tail is not claimed; this is documented in protocol.md.
 6. **GPU per-process utilization is not available** from NVML; the rule is
    UNKNOWN. Per-process memory is used where the driver exposes it.
-7. **Physical reboot tests were not performed.** The Linux host is shared with
-   another logged-in user and has no GPU jobs, but rebooting it was avoided.
-   The systemd unit/linger/restart and simulated boot-id recovery were verified.
-   The Windows AtStartup registration was blocked by the non-elevated session.
+7. **Privileged/reboot acceptance was performed on independent target machines,
+   not on the shared C2 development host.** The maintainer completed the Linux
+   physical reboot and Windows AtStartup/no-login checks there; raw logs were
+   not exported to this workspace. The C2-host systemd/linger/restart and
+   boot-id simulation remain documented separately.
 8. **No AMD/Intel GPU, no multi-host console, no Web API** — explicit V1
    non-goals.
 9. **Task Scheduler stop is hard.** Stopping a task can leave the session

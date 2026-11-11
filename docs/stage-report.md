@@ -73,33 +73,30 @@ Completed:
 
 | Suite | Result |
 |---|---|
-| Windows `pytest -q` | **114 passed, 1 skipped** (WDDM per-process GPU memory) |
-| Linux `pytest -q` | **115 passed** |
+| Windows `pytest -q` | **116 passed, 1 skipped** (WDDM per-process GPU memory) |
+| Linux `pytest -q` | **117 passed** |
 | Schema drift | passed |
 | Windows/Linux one-file binaries | version/doctor/service smoke passed |
 | Real DingTalk | `ok=true, channel=dingtalk`; user confirmed |
 | Real Linux handoffs | both paths, one path, defaults, rejected, SSH disconnect, crash recovery |
 
-## Remaining / environment-limited
+## Previously environment-limited — now closed by maintainer acceptance
 
-1. **AT-035 Windows AtStartup/no-login boot — NOT_VERIFIED.** The acceptance
-   session is non-elevated: COM AtStartup+S4U returned `Access is denied`. The
-   AtLogOn COM task was registered, started, verified and removed. Required
-   action on the target machine: run `deploy/windows/install-task.ps1
-   -TriggerType AtStartup` from an elevated PowerShell, reboot, verify
-   `atw status --json` and one DingTalk task.
-2. **Physical reboot sub-cases of AT-034/AT-023 — NOT_VERIFIED.** The Ubuntu
-   host is shared with another logged-in user; it was not rebooted. systemd
-   enable/linger, crash restart, recovery and SSH-session independence were
-   verified. Required action: reboot during a maintenance window and confirm
-   the unit is active with no login and old tasks become INTERRUPTED.
+1. **AT-035 Windows AtStartup/no-login boot — PASS.** The maintainer ran the
+   elevated AtStartup/S4U installation and a reboot without login on an
+   independent Windows target machine. Raw logs were not exported to this
+   workspace; recorded as maintainer attestation in `acceptance.md`.
+2. **Physical reboot sub-cases of AT-034/AT-023 — PASS.** The maintainer
+   rebooted an independent Linux target; systemd auto-started the user unit,
+   pre-reboot monitoring did not attach to new processes, and the expected
+   INTERRUPTED/recovery behavior was observed. Raw logs were not exported.
 3. No physical GPU-less host and no AMD/Intel GPU; degradation is unit-tested
    and Windows WDDM real hardware exercised UNKNOWN paths.
 
-## Next actions (if continuing)
+## Next actions
 
-- Run the two privileged/reboot verification items above and append results to
-  `docs/acceptance.md`; no code change is expected.
-- Push the repository, tag `v1.0.0`, let the GitHub Actions workflow build the
-  release, and attach the local archives in `dist/release/`.
-- Maintainer confirmation of the MIT license before public release.
+- Tag `v1.0.0` after this acceptance commit; GitHub Actions builds/tests and
+  creates the Release.
+- Maintainer confirmed MIT (README/license updated in `b2e903f`).
+- Rotate and update the DingTalk webhook after the pre-release log-redaction
+  fix (maintainer confirmed completion).

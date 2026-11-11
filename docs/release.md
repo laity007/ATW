@@ -33,6 +33,12 @@ build required `GLIBC_2.38`; the one-off repair workflow was removed and
 [`release.yml`](../.github/workflows/release.yml) now pins `ubuntu-22.04` for
 future releases.
 
+Note: the `v1.0.0` tag itself was cut before the runner pin (its in-tag
+`release.yml` still says `ubuntu-latest`). The **published Linux asset** was
+rebuilt from the post-tag `main` with `ubuntu-22.04` and is verified. To
+reproduce the 22.04-compatible binary from source, use `main` or cherry-pick
+commit `bac0d80`; no runtime source change is involved.
+
 ## Local reproducible archives
 
 `dist/release/atw-v1.0.0-windows-x86_64.zip` and

@@ -47,7 +47,16 @@ credentials are configured and a token length; it never prints the URL,
 token or secret.
 
 Notification error strings are sanitized: the webhook URL, token, secret and
-signature are replaced with `***` before logging or persisting.
+signature are replaced with `***` before logging or persisting. In addition,
+the HTTP client loggers (`httpx`, `httpcore`, `urllib3`) are forced to
+`WARNING` so their INFO request-line (which contains the full signed URL) is
+never written, and every ATW log handler carries a redaction filter for
+`access_token` / `sign` / `secret` / `webhook` query parameters. Regression
+tests: `tests/unit/test_logging_secrets.py`.
+
+If upgrading an earlier pre-release build, inspect and redact existing
+`logs/atw.log*` files for `access_token` / `sign` query values and rotate the
+DingTalk webhook if any signed URL was written before this fix.
 
 ## 5. File permissions
 

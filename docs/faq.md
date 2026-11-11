@@ -85,6 +85,21 @@ If another process holds `data/atw.lock`, stop it first. On Windows check
 The mock provider writes to `logs/mock_notifications.jsonl` when no credentials
 are configured.
 
+`doctor` verifies configuration, not successful message delivery. Likewise,
+`delivered` records with `channel=mock` do not prove the DingTalk API accepted
+anything. Confirm the test reports `ok=true, channel=dingtalk` and inspect
+outbox rows by channel.
+
+If an explicit local HTTP proxy reaches DingTalk while ordinary requests time
+out, set `HTTP_PROXY` / `HTTPS_PROXY` in an ATW-only systemd drop-in; see
+[Linux outbound proxy setup](deployment-linux.md#31-outbound-http-proxy-optional).
+A service does not automatically inherit an interactive shell's proxy, and a
+CLI test does not inherit the service's environment. Keep credentials private
+and test with the same effective environment. Already queued messages wait
+until their scheduled retry time; network recovery does not imply immediate
+queue delivery.
+
+
 ## Why is my warning not repeating / is repeating too often?
 
 Warnings are events, not states. A warning fires when its sustained condition

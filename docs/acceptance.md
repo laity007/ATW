@@ -28,8 +28,8 @@ Python upgrade and no root service installation.
 
 | Suite | Command | Result |
 |---|---|---|
-| Windows unit/integration/GPU/E2E | `.venv\Scripts\python.exe -m pytest -q` | **114 passed, 1 skipped** (GPU per-process memory unavailable under WDDM) |
-| Linux unit/integration/GPU/E2E | `../runtime/python/bin/python3 -m pytest -q` in the source tree | **115 passed** |
+| Windows unit/integration/GPU/E2E | `.venv\Scripts\python.exe -m pytest -q` | **116 passed, 1 skipped** (GPU per-process memory unavailable under WDDM) |
+| Linux unit/integration/GPU/E2E | `../runtime/python/bin/python3 -m pytest -q` in the source tree | **117 passed** |
 | Schema drift | `python -m atw.schema_export --check` | passed |
 | Windows bundled exe | `atw.exe --version`, `doctor --json`, `service run --max-seconds 2` | passed |
 | Linux bundled binary | `atw --version`, `doctor --json`, `service run --max-seconds 2` | passed |

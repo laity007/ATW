@@ -22,9 +22,9 @@ ATW 是一个**零大模型调用**的本地计算任务监督程序：AI Agent 
 
 ## 验收状态（2026-11-10）
 
-- Windows：`114 passed, 1 skipped`（WDDM 下 NVML 不提供进程级显存，按 UNKNOWN
+- Windows：`116 passed, 1 skipped`（WDDM 下 NVML 不提供进程级显存，按 UNKNOWN
   处理，不是 0）。
-- Ubuntu 22.04：`115 passed`（含真实 RTX 3090 NVML 进程显存测试）。
+- Ubuntu 22.04：`117 passed`（含真实 RTX 3090 NVML 进程显存测试）。
 - 真实 Linux 交接：显式双路径、仅日志路径、双默认路径、rejected 回执、
   SSH 断开后继续监控、systemd `kill -9` 后自动恢复，均已实测。
 - 真实钉钉测试消息发送成功（`ok=true, channel=dingtalk`）。

@@ -77,6 +77,44 @@ ATW_DINGTALK_SECRET=SEC...
 The generated unit uses `EnvironmentFile=-%h/.config/atw/atw.env`.
 Alternatively export the variables in the service manager environment.
 
+### 3.1 Outbound HTTP proxy (optional)
+
+If ordinary HTTPS requests time out but an explicit local proxy works, give
+**only ATW** a proxy rather than changing machine-wide routes or TUN settings.
+The DingTalk HTTP client uses HTTPX's environment proxy support.
+
+Create `~/.config/systemd/user/atw.service.d/20-notification-proxy.conf`:
+
+```ini
+[Service]
+Environment="HTTP_PROXY=http://127.0.0.1:7890"
+Environment="HTTPS_PROXY=http://127.0.0.1:7890"
+Environment="NO_PROXY=localhost,127.0.0.1,::1"
+```
+
+`7890` is an example: use the actual HTTP/mixed proxy listener on the host.
+Even for HTTPS destinations, an HTTP CONNECT proxy uses an `http://` proxy URL.
+Do not put a subscription URL or proxy credentials in shared documentation.
+
+```bash
+systemctl --user daemon-reload
+systemctl --user restart atw.service
+systemctl --user is-active atw.service
+```
+
+Restarting ATW does not stop or restart compute tasks. The local proxy must
+remain available; this drop-in does not start it or guarantee its boot order.
+To roll back, remove only this drop-in, then reload and restart ATW again.
+
+An interactive `atw notify test --json` does **not** inherit the service's
+environment. Supply the same proxy and DingTalk credentials to the test
+process without printing them. A successful test requires `ok=true` and
+`channel=dingtalk`, not merely HTTP reachability or `doctor` passing.
+Existing queued notifications retain their backoff schedule after restart;
+do not edit SQLite to force delivery. Check `atw notifications --json` for
+actual `channel=dingtalk, status=delivered` records. `mock` delivery counts
+are not evidence of DingTalk delivery.
+
 ## 4. systemd user service
 
 The installer generates `~/.config/systemd/user/atw.service`:

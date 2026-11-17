@@ -33,6 +33,12 @@ def _clip(value: str, limit: int = 300) -> str:
     return text[:limit] + "…"
 
 
+def format_blocker(check: dict[str, Any]) -> str:
+    label = "成功规则" if check["rule"] == "success" else "失败规则无法判定"
+    path = f"（{check['path']}）" if check.get("path") else ""
+    return f"{label} · {check['detail']}{path}".replace("\r", " ").replace("\n", " ")
+
+
 def _path_list(paths: list[str]) -> str:
     if not paths:
         return "未指定"
@@ -126,6 +132,12 @@ def render_event(
         )
         if payload.get("reason"):
             lines.append(f"- **说明：** {_clip(str(payload.get('reason')))}")
+        blockers = (payload.get("finalize_diagnostics") or {}).get("blockers", [])
+        if blockers:
+            lines.append("- **待核对的规则：**")
+            lines.extend(f"  - {_clip(format_blocker(check))}" for check in blockers[:5])
+            if len(blockers) > 5:
+                lines.append(f"  - 另有 {len(blockers) - 5} 项，见 atw show")
         if payload.get("cpu_percent") is not None:
             lines.append(f"- **CPU（树聚合）：** {payload.get('cpu_percent')}%")
         lines.append(f"- **GPU：** {_gpu_summary(payload.get('gpu'))}")

@@ -115,6 +115,13 @@ atw service run
 所有 `--json` 输出为纯 JSON（不含 ANSI/日志）。CLI 查询只读，不提供
 `kill/stop/retry/restart` 计算任务的能力。
 
+`atw show` 会列出新判定为 `UNKNOWN` 的任务需核对的规则，例如日志未命中、
+结果文件早于本次运行或证据不可读。`--json` 的 `finalize_diagnostics` 提供
+成功规则树、失败规则树、判定触发原因和逐项证据缺口。旧任务可查看已保存的证据摘要。
+
+`atw notifications` 显示后台服务的脱敏路由、队列条目的最近失败及重试时间。
+Linux wheel 升级与回滚见 [Linux 部署](docs/deployment-linux.md#5-verified-wheel-upgrade-and-rollback)。
+
 ## 协议与目录
 
 ```text

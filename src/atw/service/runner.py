@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 import signal
@@ -18,6 +19,7 @@ from atw.monitoring.evidence import EvidenceMonitor
 from atw.monitoring.gpu import GpuMonitor
 from atw.monitoring.process import ProcessMonitor
 from atw.monitoring.supervisor import Supervisor
+from atw.notifications.dingtalk import DingTalkNotifier
 from atw.notifications.factory import build_notifier
 from atw.notifications.worker import OutboxWorker
 from atw.rules.engine import RuleEngine
@@ -49,7 +51,7 @@ class ServiceRunner:
             logger.error("另一个 ATW 服务实例已在运行（锁 %s）", self.paths.lock_file)
             return 3
         db = Database(self.paths.db_file)
-        notifier = None
+        worker = None
         wake = WakeEvent()
         watcher = InboxWatcher(self.paths.inbox, wake.set)
         session_id = uuid.uuid4().hex
@@ -59,6 +61,7 @@ class ServiceRunner:
             repo = Repository(db)
             boot = current_boot_identity()
             notifier = build_notifier(self.cfg, self.paths.mock_notifications_file)
+            worker = OutboxWorker(repo, notifier, self.cfg.notification)
             process_monitor = ProcessMonitor(
                 create_time_tolerance=self.cfg.process_create_time_tolerance_seconds
             )
@@ -95,6 +98,13 @@ class ServiceRunner:
                 started_at=session_started,
                 service_version=__version__,
             )
+            route = notifier.route if isinstance(notifier, DingTalkNotifier) else "local"
+            repo.set_state(
+                "notification_route",
+                json.dumps({"session_id": session_id, "channel": notifier.channel, "route": route}),
+                session_started,
+            )
+            logger.info("notification channel=%s route=%s", notifier.channel, route)
             task_service = TaskService(
                 self.cfg,
                 self.paths,
@@ -104,7 +114,6 @@ class ServiceRunner:
                 boot_id=boot.boot_id,
                 channel=notifier.channel,
             )
-            worker = OutboxWorker(repo, notifier, self.cfg.notification)
             watcher.start()
 
             stop = threading.Event()
@@ -123,12 +132,11 @@ class ServiceRunner:
 
             # Immediate first pass: pending inbox and previously queued outbox.
             self._drain_inbox(task_service)
-            worker.run_once()
+            worker.start(self.cfg.outbox_interval_seconds)
             repo.purge_retention(self.cfg.retention_days)
 
             last_scan = 0.0
             last_sample = 0.0
-            last_outbox = 0.0
             last_health = 0.0
             last_retention = 0.0
             started_mono = time.monotonic()
@@ -141,9 +149,6 @@ class ServiceRunner:
                     if now_mono - last_sample >= self.cfg.sample_interval_seconds:
                         supervisor.tick()
                         last_sample = now_mono
-                    if now_mono - last_outbox >= self.cfg.outbox_interval_seconds:
-                        worker.run_once()
-                        last_outbox = now_mono
                     if now_mono - last_health >= 30.0:
                         supervisor.maybe_daily_health(session_started)
                         last_health = now_mono
@@ -163,6 +168,11 @@ class ServiceRunner:
             logger.info("ATW 服务退出中 session=%s", session_id)
             return 0
         finally:
+            if worker is not None:
+                try:
+                    worker.close()
+                except Exception:
+                    logger.exception("停止通知 worker 失败")
             try:
                 watcher.stop()
             except Exception:
@@ -171,11 +181,6 @@ class ServiceRunner:
                 Repository(db).close_session(session_id, utc_now(), clean=True)
             except Exception:
                 logger.exception("关闭服务会话失败")
-            try:
-                if notifier is not None:
-                    notifier.close()
-            except Exception:
-                pass
             try:
                 db.close()
             except Exception:

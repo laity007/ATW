@@ -411,16 +411,27 @@ class Repository:
         *,
         next_attempt_at: datetime,
         error: str | None,
+        failed_at: datetime,
+        error_code: str,
+        route: str | None = None,
         max_attempts: int = 0,
     ) -> str:
-        row = self.db.query_one("SELECT attempts FROM notification_outbox WHERE id=?", (row_id,))
-        attempts = int(row["attempts"]) + 1 if row else 1
-        status = "failed" if max_attempts and attempts >= max_attempts else "pending"
-        self.db.execute(
-            "UPDATE notification_outbox SET attempts=?, status=?, next_attempt_at=?,"
-            " last_error=? WHERE id=?",
-            (attempts, status, dt_to_z(next_attempt_at), (error or "")[:1000], row_id),
-        )
+        summary = (error or "发送失败")[:1000]
+        with self.db.transaction() as conn:
+            row = conn.execute(
+                "UPDATE notification_outbox SET attempts=attempts+1,"
+                " status=CASE WHEN ? > 0 AND attempts+1 >= ? THEN 'failed' ELSE 'pending' END,"
+                " next_attempt_at=?, last_error=? WHERE id=? RETURNING status",
+                (max_attempts, max_attempts, dt_to_z(next_attempt_at), summary, row_id),
+            ).fetchone()
+            conn.execute(
+                "INSERT INTO notification_failures(outbox_id, failed_at, code, summary, route)"
+                " VALUES (?,?,?,?,?) ON CONFLICT(outbox_id) DO UPDATE SET"
+                " failed_at=excluded.failed_at, code=excluded.code,"
+                " summary=excluded.summary, route=excluded.route",
+                (row_id, dt_to_z(failed_at), error_code, summary, route),
+            )
+            status = str(row["status"])
         return status
 
     def outbox_deliveries_since(self, channel: str, since: datetime) -> int:
@@ -439,9 +450,9 @@ class Repository:
 
     def recent_notifications(self, limit: int = 50) -> list[sqlite3.Row]:
         return self.db.query_all(
-            "SELECT id, task_id, event_type, channel, status, attempts, created_at,"
-            " delivered_at, last_error, payload_json FROM notification_outbox"
-            " ORDER BY id DESC LIMIT ?",
+            "SELECT o.*, f.failed_at, f.code AS failure_code, f.summary AS failure_summary,"
+            " f.route AS failure_route FROM notification_outbox o"
+            " LEFT JOIN notification_failures f ON f.outbox_id=o.id ORDER BY o.id DESC LIMIT ?",
             (limit,),
         )
 

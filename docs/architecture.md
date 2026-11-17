@@ -37,9 +37,12 @@ Recovery manager: service restart vs host boot, terminal immutability
 - Inbox scan every `scan_interval_seconds` (default 5 s); watchdog events also
   wake the scanner. `.tmp` is never consumed.
 - Supervisor tick every `sample_interval_seconds` (default 10 s).
-- Outbox worker every `outbox_interval_seconds` (default 2 s).
+- One background worker polls the outbox every `outbox_interval_seconds`
+  (default 2 s). HTTP requests run independently of inbox scans and sampling.
 - Daily health check every 30 s when enabled; retention cleanup hourly.
 - SIGINT/SIGTERM (and SIGBREAK on Windows) marks the session cleanly closed.
+  The outbox stops taking new sends and has up to 5 seconds to finish the
+  current request. An unconfirmed row remains pending for the next startup.
 
 ## 3. Registration transaction
 
@@ -134,10 +137,13 @@ utilization. Therefore:
 - On startup:
   - boot_id changed → all MONITORING tasks become INTERRUPTED, one notification
     each, never reactivated;
-  - same boot + previous unclean shutdown → revalidate each process identity;
-    alive tasks resume, dead tasks are decided from evidence (SUCCESS/FAILED/
-    UNKNOWN), and one `SERVICE_RECOVERED` is sent;
-  - clean restart → resume quietly, no recovery notification;
+  - same boot → revalidate each process identity and evaluate tasks through the
+    normal monitoring path. After process exit, an unresolved task keeps its
+    first observed exit time and waits up to `finalize_grace_seconds` for late
+    evidence (default 15 s). The wait starts at recovery if this is the first
+    confirmed exit;
+  - after an unclean shutdown with recovered tasks, send one
+    `SERVICE_RECOVERED` notification;
   - first install → no recovery notification.
 - Outbox rows persist; network failures retry with capped exponential backoff.
   Delivery is at-least-once attempt with dedupe keys, not exactly-once HTTP.

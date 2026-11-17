@@ -19,8 +19,9 @@ from atw.health.bootid import current_boot_identity
 from atw.health.doctor import run_doctor
 from atw.intake.receipts import ReceiptStore
 from atw.models.task import Receipt, parse_request_json
+from atw.notifications.dingtalk import DingTalkNotifier
 from atw.notifications.factory import build_notifier
-from atw.notifications.templates import render_test_message
+from atw.notifications.templates import format_blocker, render_test_message
 from atw.service.lock import SingleInstanceLock
 from atw.service.runner import ServiceRunner
 from atw.storage.db import Database
@@ -265,6 +266,7 @@ def show(
         ]
         data = {
             "task": record.snapshot(),
+            "finalize_diagnostics": record.runtime.get("finalize_diagnostics"),
             "revisions": revisions,
             "processes": processes,
             "observations": observations,
@@ -283,6 +285,13 @@ def show(
         typer.echo(
             f"终态: {record.state if record.terminal else '-'}  {record.finalize_reason or ''}"
         )
+        if record.state == "UNKNOWN":
+            diagnostics = record.runtime.get("finalize_diagnostics")
+            if diagnostics:
+                for check in diagnostics["blockers"]:
+                    typer.echo(f"  {format_blocker(check)}")
+            elif record.finalize_evidence:
+                typer.echo(f"判断证据: {record.finalize_evidence}")
         if record.evidence:
             typer.echo(f"运行目录: {record.evidence.run_directory}")
             if record.evidence.log:
@@ -488,12 +497,17 @@ def notify_test(
             "channel": notifier.channel,
             "title": message.title,
             "error": result.error,
+            "error_code": result.error_code,
+            "route": result.route or (
+                notifier.route if isinstance(notifier, DingTalkNotifier) else "local"
+            ),
         }
         if json_output:
             _emit_json(payload)
         else:
             typer.echo(
-                f"{'OK' if result.ok else 'FAIL'} channel={notifier.channel}"
+                f"{'OK' if result.ok else 'FAIL'} channel={notifier.channel} route={payload['route']}"
+                + (f" [{result.error_code}]" if result.error_code else "")
                 + (f" error={result.error}" if result.error else "")
             )
         raise typer.Exit(0 if result.ok else 1)
@@ -518,12 +532,34 @@ def notifications(
     repo, db = _repo(paths)
     try:
         counts = repo.outbox_counts()
+        session = repo.last_session()
+        route_raw = repo.get_state("notification_route")
+        service_route = json.loads(route_raw) if route_raw and session else None
+        if service_route and service_route["session_id"] == session["session_id"]:
+            service_route.update(started_at=session["started_at"], ended_at=session["ended_at"])
+        else:
+            service_route = None
         recent = []
         for row in repo.recent_notifications(limit):
             try:
                 payload = json.loads(row["payload_json"])
             except ValueError:
                 payload = {}
+            last_failure = None
+            if row["failed_at"]:
+                last_failure = {
+                    "at": row["failed_at"],
+                    "code": row["failure_code"],
+                    "summary": row["failure_summary"],
+                    "route": row["failure_route"],
+                }
+            elif row["last_error"]:
+                last_failure = {
+                    "at": None,
+                    "code": "legacy_error",
+                    "summary": "旧版投递错误，缺少脱敏诊断",
+                    "route": None,
+                }
             recent.append(
                 {
                     "id": row["id"],
@@ -534,7 +570,9 @@ def notifications(
                     "attempts": row["attempts"],
                     "created_at": row["created_at"],
                     "delivered_at": row["delivered_at"],
-                    "last_error": row["last_error"],
+                    "last_error": last_failure["summary"] if last_failure and row["last_error"] else None,
+                    "last_failure": last_failure,
+                    "next_attempt_at": row["next_attempt_at"] if row["status"] == "pending" else None,
                     "title": payload.get("title"),
                 }
             )
@@ -543,17 +581,32 @@ def notifications(
             "counts": counts,
             "recent": recent,
             "provider": cfg.notification.provider,
+            "service_route": service_route,
             "rate_limit_per_minute": cfg.notification.rate_limit_per_minute,
         }
         if json_output:
             _emit_json(data)
             return
         typer.echo(f"通知队列: {counts}")
+        if service_route:
+            typer.echo(
+                f"最近服务会话路由: {service_route['channel']} {service_route['route']}"
+                f"（启动 {service_route['started_at']}）"
+            )
+        else:
+            typer.echo("最近服务会话路由: 未记录")
         for item in recent:
             typer.echo(
                 f"{item['created_at']} {item['status']:<9} {item['event_type']:<18} "
                 f"{item['task_id'] or '-'} {item['title'] or ''}"
             )
+            if failure := item["last_failure"]:
+                typer.echo(
+                    f"  最近失败 {failure['at'] or '-'} [{failure['code']}] "
+                    f"{failure['summary']}  路由 {failure['route'] or '-'}"
+                )
+            if retry := item["next_attempt_at"]:
+                typer.echo(f"  下次可重试: {retry}")
     finally:
         db.close()
 

@@ -149,6 +149,18 @@ MIGRATIONS: list[tuple[int, str]] = [
         );
         """,
     ),
+    (
+        2,
+        """
+        CREATE TABLE IF NOT EXISTS notification_failures (
+            outbox_id  INTEGER PRIMARY KEY REFERENCES notification_outbox(id) ON DELETE CASCADE,
+            failed_at  TEXT NOT NULL,
+            code       TEXT NOT NULL,
+            summary    TEXT NOT NULL,
+            route      TEXT
+        );
+        """,
+    ),
 ]
 
 

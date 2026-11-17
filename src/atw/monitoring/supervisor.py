@@ -27,6 +27,7 @@ from atw.rules.engine import (
     EvalContext,
     RuleEngine,
     TriResult,
+    unmet_checks,
 )
 from atw.storage.records import TaskRecord
 from atw.storage.repository import Repository
@@ -70,11 +71,7 @@ class Supervisor:
         tasks = self.repo.monitoring_tasks()
         if not tasks:
             return 0
-        pids: set[int] = set()
-        for record in tasks:
-            for row in self.repo.list_processes(record.task_id, alive_only=True):
-                pids.add(int(row["pid"]))
-        gpu_snapshot = self.gpu.sample(pids) if pids else None
+        gpu_snapshot = self._sample_gpu(tasks)
         processed = 0
         for record in tasks:
             try:
@@ -84,9 +81,22 @@ class Supervisor:
                 logger.exception("监督任务失败 task_id=%s（下个周期重试）", record.task_id)
         return processed
 
+    def _sample_gpu(self, tasks: list[TaskRecord]) -> GpuSnapshot | None:
+        pids = {
+            int(row["pid"])
+            for record in tasks
+            for row in self.repo.list_processes(record.task_id, alive_only=True)
+        }
+        return self.gpu.sample(pids) if pids else None
+
     def _process_task(
-        self, record: TaskRecord, now: datetime, gpu_snapshot: GpuSnapshot | None
-    ) -> None:
+        self,
+        record: TaskRecord,
+        now: datetime,
+        gpu_snapshot: GpuSnapshot | None,
+        *,
+        recovering: bool = False,
+    ) -> bool:
         known_rows = self.repo.list_processes(record.task_id)
         root_identity = self._root_identity(record, known_rows)
         known = [
@@ -128,11 +138,19 @@ class Supervisor:
         failure, finalize_mode = self.engine.evaluate_failure(record.task_id, record.rules, ctx)
         conflict = success.truth == TRUE and failure.truth == TRUE
 
+        exit_at = runtime.get("exit_observed_at")
+        if not snap.tree_exited:
+            exit_at = None
+        elif exit_at is None:
+            exit_at = now.timestamp()
+        runtime["exit_observed_at"] = exit_at
+
         notification_payloads: list[dict[str, Any]] = []
         terminal_state = self._decide_terminal(
-            success, failure, finalize_mode, snap, runtime, record, now
+            success, failure, finalize_mode, snap, exit_at, now
         )
         terminal_reason = ""
+        max_state = None
         if terminal_state is not None:
             terminal_reason = self._terminal_reason(terminal_state, success, failure, snap)
         if terminal_state is None:
@@ -154,24 +172,17 @@ class Supervisor:
             "success": success.truth,
             "failure": failure.truth,
         }
+        if recovering:
+            observation_details["recovery"] = True
 
         warning_updates = runtime.get("warnings") or {}
         runtime["warnings"] = warning_updates
 
         if terminal_state is None:
-            runtime["exit_observed_at"] = (
-                runtime.get("exit_observed_at") if snap.tree_exited else None
-            )
-            if snap.tree_exited and runtime.get("exit_observed_at") is None:
-                runtime["exit_observed_at"] = now.timestamp()
             if not snap.tree_exited:
                 self._collect_warnings(record, ctx, runtime, notification_payloads, now)
             self._collect_progress(
                 record, runtime, notification_payloads, now, elapsed, snap, gpu_metrics
-            )
-        else:
-            runtime["exit_observed_at"] = (
-                now.timestamp() if snap.tree_exited else runtime.get("exit_observed_at")
             )
 
         with self.repo.db.transaction() as conn:
@@ -209,6 +220,24 @@ class Supervisor:
                     "cpu_percent": snap.cpu_percent,
                     "gpu": task_gpu,
                 }
+                if terminal_state == "UNKNOWN":
+                    blockers = []
+                    if success.truth != TRUE:
+                        blockers.extend(
+                            {"rule": "success", **check} for check in unmet_checks(success.check)
+                        )
+                    if failure.truth == UNKNOWN:
+                        blockers.extend(
+                            {"rule": "failure", **check} for check in unmet_checks(failure.check)
+                        )
+                    decision = {
+                        "trigger": "process_exit" if max_state is None else "max_runtime",
+                        "success": success.check,
+                        "failure": failure.check,
+                        "blockers": blockers,
+                    }
+                    runtime["finalize_diagnostics"] = decision
+                    payload["finalize_diagnostics"] = decision
                 self._finalize(
                     conn,
                     record,
@@ -220,6 +249,18 @@ class Supervisor:
                     now,
                 )
             else:
+                if recovering:
+                    self.repo.record_event(
+                        conn,
+                        task_id=record.task_id,
+                        event_type="RECOVERY_RESUMED",
+                        instance=now.isoformat(),
+                        payload={
+                            "pid": [m.identity.pid for m in snap.members],
+                            "awaiting_evidence": snap.tree_exited,
+                        },
+                        now=now,
+                    )
                 for item in notification_payloads:
                     self._record_notification(conn, record, item, now)
                 runtime["last_sample"] = {
@@ -233,6 +274,7 @@ class Supervisor:
 
         if terminal_state is not None:
             self._archive(record.task_id)
+        return terminal_state is not None
 
     # ------------------------------------------------------------- decisions
     def _decide_terminal(
@@ -241,8 +283,7 @@ class Supervisor:
         failure: TriResult,
         finalize_mode: str,
         snap: ProcessSnapshot,
-        runtime: dict[str, Any],
-        record: TaskRecord,
+        exit_at: float | None,
         now: datetime,
     ) -> str | None:
         if success.truth == TRUE and failure.truth == TRUE:
@@ -252,13 +293,8 @@ class Supervisor:
                 return "FAILED"
         if success.truth == TRUE and failure.truth == FALSE and snap.tree_exited:
             return "SUCCESS"
-        if snap.tree_exited:
-            exit_at = runtime.get("exit_observed_at")
-            if exit_at is None:
-                runtime["exit_observed_at"] = now.timestamp()
-                exit_at = now.timestamp()
-            if now.timestamp() - float(exit_at) >= self.cfg.finalize_grace_seconds:
-                return "UNKNOWN"
+        if exit_at is not None and now.timestamp() - float(exit_at) >= self.cfg.finalize_grace_seconds:
+            return "UNKNOWN"
         return None
 
     @staticmethod
@@ -443,6 +479,8 @@ class Supervisor:
         except Exception:
             logger.exception("通知模板渲染失败 task_id=%s event=%s", record.task_id, event_type)
         event_payload = {"title": message.title, "text": message.text} if message else payload
+        if "finalize_diagnostics" in payload:
+            event_payload["finalize_diagnostics"] = payload["finalize_diagnostics"]
         self.repo.record_event(
             conn,
             task_id=record.task_id,
@@ -609,14 +647,15 @@ class Supervisor:
         result["mode"] = "service_restart"
         previous_crashed = not bool(last["clean_shutdown"])
         recovered_ids: list[str] = []
+        now = ensure_utc(self.clock())
+        gpu_snapshot = self._sample_gpu(monitoring)
         for record in monitoring:
             try:
-                did_recover, finalized = self._recover_task(record)
-                if did_recover:
-                    recovered_ids.append(record.task_id)
+                finalized = self._process_task(record, now, gpu_snapshot, recovering=True)
+                recovered_ids.append(record.task_id)
                 if finalized:
                     result["finalized"] += 1
-                if did_recover and not finalized:
+                else:
                     result["resumed"] += 1
             except Exception:
                 logger.exception("服务恢复失败 task_id=%s", record.task_id)
@@ -628,87 +667,6 @@ class Supervisor:
             )
             self.repo.mark_session_recovered(str(last["session_id"]))
         return result
-
-    def _recover_task(self, record: TaskRecord) -> tuple[bool, bool]:
-        known_rows = self.repo.list_processes(record.task_id)
-        root_identity = self._root_identity(record, known_rows)
-        known = [
-            ProcessIdentity(int(row["pid"]), float(row["create_time_epoch"]))
-            for row in known_rows
-            if row["alive"]
-        ]
-        if root_identity is not None and root_identity not in known:
-            known.append(root_identity)
-        snap = self.processes.snapshot(record.target, known, root_identity)
-        ev_snap, runtime = self.evidence.refresh(record, record.runtime)
-        runtime["rules_hash"] = _rules_hash(record.rules)
-        now = ensure_utc(self.clock())
-        started_at = record.run_started_at or record.accepted_at
-        elapsed = max(0.0, (now - started_at).total_seconds()) if started_at else 0.0
-        ctx = EvalContext(
-            now=now,
-            now_epoch=now.timestamp(),
-            started_at=started_at,
-            elapsed_seconds=elapsed,
-            process=snap,
-            evidence=ev_snap,
-            gpu=None,
-            bound_pids={m.identity.pid for m in snap.members},
-        )
-        success = self.engine.evaluate_success(record.task_id, record.rules, ctx)
-        failure, finalize_mode = self.engine.evaluate_failure(record.task_id, record.rules, ctx)
-        if snap.tree_alive:
-            runtime["exit_observed_at"] = None
-            with self.repo.db.transaction() as conn:
-                self._persist_processes(conn, record, snap, known_rows, now)
-                self.repo.update_runtime(conn, record.task_id, runtime, now)
-                self.repo.record_event(
-                    conn,
-                    task_id=record.task_id,
-                    event_type="RECOVERY_RESUMED",
-                    instance=now.isoformat(),
-                    payload={"pid": [m.identity.pid for m in snap.members]},
-                    now=now,
-                )
-            self.processes.prime(record.target)
-            return True, False
-
-        # All known processes are gone: decide from the evidence now, no grace.
-        state = "UNKNOWN"
-        if success.truth == TRUE and failure.truth == TRUE:
-            state = "FAILED"
-        elif failure.truth == TRUE:
-            state = "FAILED"
-        elif success.truth == TRUE and failure.truth == FALSE:
-            state = "SUCCESS"
-        reason = {
-            "SUCCESS": "服务恢复时进程已退出，成功规则与证据满足",
-            "FAILED": "服务恢复时进程已退出，失败规则满足",
-            "UNKNOWN": "服务恢复时进程已退出，但证据不足或为 UNKNOWN，不能判定成功",
-        }[state]
-        summary = self._summary(success, failure, state)
-        payload = {
-            "state": state,
-            "reason": reason,
-            "duration_seconds": elapsed,
-            "evidence_summary": summary,
-            "gpu": {"available": False, "reason": "恢复阶段未采样"},
-        }
-        with self.repo.db.transaction() as conn:
-            self._persist_processes(conn, record, snap, known_rows, now)
-            self.repo.add_observation(
-                conn,
-                task_id=record.task_id,
-                ts=now,
-                cpu_percent=None,
-                memory_rss=None,
-                gpu=None,
-                process_alive=False,
-                details={"recovery": True, "process": snap.details()},
-            )
-            self._finalize(conn, record, state, reason, summary, runtime, payload, now)
-        self._archive(record.task_id)
-        return True, True
 
     def _notify_service_recovered(
         self, *, previous_session_id: str, task_ids: list[str], now: datetime

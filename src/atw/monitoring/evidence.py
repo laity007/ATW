@@ -33,6 +33,7 @@ class FileEvidence:
     size: int | None
     mtime: float | None
     error: str | None = None
+    unavailable_code: str | None = None
 
 
 @dataclass(slots=True)
@@ -47,6 +48,7 @@ class LogEvidence:
     rotated: bool = False
     truncated: bool = False
     age_seconds: float | None = None
+    unavailable_code: str | None = None
 
 
 @dataclass(slots=True)
@@ -182,12 +184,12 @@ class EvidenceMonitor:
         try:
             resolved = self._safe(path)
             st = os.stat(resolved)
-        except AtwError as exc:
-            return FileEvidence(path, False, False, None, None, exc.message)
         except FileNotFoundError:
-            return FileEvidence(path, False, False, None, None, "文件不存在")
+            return FileEvidence(path, False, False, None, None, "文件不存在", "file_missing")
+        except AtwError as exc:
+            return FileEvidence(path, False, False, None, None, exc.message, "file_unreadable")
         except OSError as exc:
-            return FileEvidence(path, False, False, None, None, f"文件不可读: {exc}")
+            return FileEvidence(path, False, False, None, None, f"文件不可读: {exc}", "file_unreadable")
         fresh = st.st_mtime >= (started - self.freshness_tolerance)
         return FileEvidence(
             path=str(resolved),
@@ -229,6 +231,7 @@ class EvidenceMonitor:
                     mtime=None,
                     matched=matched,
                     error="日志文件尚不存在",
+                    unavailable_code="log_missing",
                     age_seconds=None,
                 ),
                 state,

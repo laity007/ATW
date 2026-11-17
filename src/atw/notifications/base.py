@@ -17,6 +17,8 @@ class SendResult:
     ok: bool
     error: str | None = None
     detail: str | None = None
+    error_code: str | None = None
+    route: str | None = None
 
 
 class Notifier(Protocol):

@@ -1,12 +1,14 @@
 from __future__ import annotations
 
+import sqlite3
+from contextlib import closing
 from datetime import timedelta
 
 from atw.models.task import Target
-from atw.storage.db import Database
+from atw.storage.db import MIGRATIONS, Database
 from atw.storage.records import TaskRecord
 from atw.storage.repository import Repository
-from atw.utils.timeutil import utc_now
+from atw.utils.timeutil import dt_to_z, utc_now
 
 
 def _record(task_id: str = "t1") -> TaskRecord:
@@ -35,16 +37,30 @@ def _record(task_id: str = "t1") -> TaskRecord:
 
 
 def test_wal_and_migrations(tmp_path) -> None:
-    db = Database(tmp_path / "atw.db")
+    path = tmp_path / "atw.db"
+    timestamp = dt_to_z(utc_now())
+    with closing(sqlite3.connect(path)) as conn:
+        conn.executescript(MIGRATIONS[0][1])
+        conn.execute("CREATE TABLE schema_migrations (version INTEGER PRIMARY KEY, applied_at TEXT)")
+        conn.execute("INSERT INTO schema_migrations VALUES (1, ?)", (timestamp,))
+        conn.execute(
+            "INSERT INTO notification_outbox(event_type, event_instance, dedupe_key, channel,"
+            " payload_json, next_attempt_at, created_at) VALUES ('SUCCESS','final','old','mock','{}',?,?)",
+            (timestamp, timestamp),
+        )
+        conn.commit()
+    db = Database(path)
     db.connect()
     assert db.query_one("PRAGMA journal_mode")[0].lower() == "wal"
     versions = [row["version"] for row in db.query_all("SELECT version FROM schema_migrations")]
-    assert versions == [1]
+    assert versions == [1, 2]
+    row = Repository(db).recent_notifications()[0]
+    assert (row["dedupe_key"], row["status"], row["failed_at"]) == ("old", "pending", None)
     db.close()
     db2 = Database(tmp_path / "atw.db")
     db2.connect()
     versions2 = [row["version"] for row in db2.query_all("SELECT version FROM schema_migrations")]
-    assert versions2 == [1]
+    assert versions2 == [1, 2]
     db2.close()
 
 

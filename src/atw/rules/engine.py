@@ -8,6 +8,7 @@ delayed, never fabricated).
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
@@ -38,6 +39,7 @@ class EvalContext:
 class TriResult:
     truth: str
     details: list[str] = field(default_factory=list)
+    check: dict[str, Any] = field(default_factory=dict)
 
     @property
     def is_true(self) -> bool:
@@ -46,6 +48,19 @@ class TriResult:
     @property
     def is_unknown(self) -> bool:
         return self.truth == UNKNOWN
+
+
+def unmet_checks(check: dict[str, Any]) -> Iterator[dict[str, Any]]:
+    if check["truth"] == TRUE:
+        return
+    if check["kind"] in {"all", "any", "not"} and not check.get("code"):
+        for child in check.get("children", []):
+            if check["kind"] == "not" and child["truth"] == TRUE:
+                yield {**check, "detail": f"否定条件的内层已满足（{child['detail']}）"}
+            else:
+                yield from unmet_checks(child)
+        return
+    yield check
 
 
 def condition_has_positive_evidence(cond: Condition | None) -> bool:
@@ -75,20 +90,27 @@ class RuleEngine:
     # ------------------------------------------------------------------ public
     def evaluate_success(self, task_id: str, rules: RulesSpec, ctx: EvalContext) -> TriResult:
         if rules.success is None:
-            return TriResult(FALSE, ["未配置成功规则"])
+            return TriResult(FALSE, ["未配置成功规则"], {
+                "truth": FALSE, "kind": "success", "code": "rule_not_configured",
+                "detail": "未配置成功规则",
+            })
         result = self._evaluate(task_id, "success", rules.success, ctx)
         if result.truth == TRUE and not condition_has_positive_evidence(rules.success):
-            return TriResult(
-                UNKNOWN,
-                result.details + ["成功规则缺少日志/结果等正向证据；按规范不得判为 SUCCESS"],
-            )
+            detail = "成功规则缺少日志/结果等正向证据；按规范不得判为 SUCCESS"
+            return TriResult(UNKNOWN, result.details + [detail], {
+                "truth": UNKNOWN, "kind": "success", "code": "positive_evidence_required",
+                "detail": detail, "children": [result.check],
+            })
         return result
 
     def evaluate_failure(
         self, task_id: str, rules: RulesSpec, ctx: EvalContext
     ) -> tuple[TriResult, str]:
         if rules.failure is None:
-            return TriResult(FALSE, ["未配置失败规则"]), "on_process_exit"
+            return TriResult(FALSE, ["未配置失败规则"], {
+                "truth": FALSE, "kind": "failure", "code": "rule_not_configured",
+                "detail": "未配置失败规则",
+            }), "on_process_exit"
         failure: FailureRule = rules.failure
         result = self._evaluate(task_id, "failure", failure, ctx)
         return result, failure.finalize
@@ -99,9 +121,41 @@ class RuleEngine:
     # ----------------------------------------------------------------- internal
     def _evaluate(self, task_id: str, key: str, cond: Condition, ctx: EvalContext) -> TriResult:
         details: list[str] = []
-        raw = self._raw(task_id, key, cond, ctx, details)
+        children: list[dict[str, Any]] = []
+        raw = self._raw(task_id, key, cond, ctx, details, children)
+        own_details = max(0, len(details) - 1)
         sustained = self._apply_sustain(task_id, key, cond.sustain_seconds, raw, ctx, details)
-        return TriResult(sustained, details)
+        kind = cond.kind or ("all" if cond.all is not None else "any" if cond.any is not None else "not")
+        check: dict[str, Any] = {
+            "kind": kind,
+            "truth": sustained,
+            "detail": "；".join(details[own_details:]),
+        }
+        if cond.kind == "log_contains":
+            log = ctx.evidence.log
+            check.update(path=log.path, value=cond.value)
+            if raw == FALSE:
+                check["code"] = "log_not_matched" if log.path else "log_not_configured"
+            elif raw == UNKNOWN:
+                check["code"] = (
+                    "log_stale" if log.available and not log.fresh
+                    else log.unavailable_code or "log_unreadable"
+                )
+        elif cond.kind in {"file_exists_fresh", "file_size_above"}:
+            file = ctx.evidence.file(cond.path or "")
+            check["path"] = cond.path
+            if raw == UNKNOWN:
+                check["code"] = "file_unreadable"
+            elif raw == FALSE:
+                if not file.exists:
+                    check["code"] = "file_missing"
+                else:
+                    check["code"] = "file_too_small" if file.fresh else "file_stale"
+        if raw != sustained:
+            check["code"] = "duration_pending"
+        if children:
+            check["children"] = children
+        return TriResult(sustained, details, check)
 
     def _apply_sustain(
         self,
@@ -137,6 +191,7 @@ class RuleEngine:
         cond: Condition,
         ctx: EvalContext,
         details: list[str],
+        children: list[dict[str, Any]],
     ) -> str:
         if cond.kind is not None:
             return self._leaf(cond, ctx, details)
@@ -147,6 +202,7 @@ class RuleEngine:
             ]
             for result in results:
                 details.extend(result.details)
+                children.append(result.check)
             if any(r.truth == FALSE for r in results):
                 details.append("all: 存在 FALSE")
                 return FALSE
@@ -162,6 +218,7 @@ class RuleEngine:
             ]
             for result in results:
                 details.extend(result.details)
+                children.append(result.check)
             if any(r.truth == TRUE for r in results):
                 details.append("any: 至少一个 TRUE")
                 return TRUE
@@ -173,6 +230,7 @@ class RuleEngine:
         if cond.not_ is not None:
             inner = self._evaluate(task_id, f"{key}.not", cond.not_, ctx)
             details.extend(inner.details)
+            children.append(inner.check)
             if inner.truth == TRUE:
                 details.append("not: 内层 TRUE -> FALSE")
                 return FALSE
@@ -208,7 +266,9 @@ class RuleEngine:
             if truth:
                 details.append(f"日志命中 {cond.value!r}")
             elif truth is None:
-                details.append(f"日志不可用/不可信，无法判断 {cond.value!r}")
+                details.append(f"{ev.log.error or '日志不可用'}，无法判断 {cond.value!r}")
+            elif ev.log.path is None:
+                details.append(f"未配置日志，无法查找 {cond.value!r}")
             else:
                 details.append(f"日志未命中 {cond.value!r}")
             return TRUE if truth is True else UNKNOWN if truth is None else FALSE
@@ -227,7 +287,9 @@ class RuleEngine:
                     "本次结果文件存在且新鲜" if f.fresh else "结果文件存在但早于本次运行"
                 )
                 return TRUE if f.fresh else FALSE
-            if f.error and "不存在" not in f.error:
+            if f.unavailable_code == "file_unreadable" or (
+                f.unavailable_code is None and f.error and "不存在" not in f.error
+            ):
                 details.append(f"结果文件不可读: {f.error}")
                 return UNKNOWN
             details.append("结果文件不存在")
@@ -241,7 +303,9 @@ class RuleEngine:
                 ok = f.size >= (cond.bytes or 0)
                 details.append(f"文件大小 {f.size}B（阈值 {cond.bytes}B）")
                 return TRUE if ok else FALSE
-            if f.error and "不存在" not in f.error:
+            if f.unavailable_code == "file_unreadable" or (
+                f.unavailable_code is None and f.error and "不存在" not in f.error
+            ):
                 details.append(f"文件不可读: {f.error}")
                 return UNKNOWN
             details.append("文件不存在")

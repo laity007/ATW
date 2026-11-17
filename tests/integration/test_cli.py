@@ -1,15 +1,19 @@
 from __future__ import annotations
 
 import json
-from datetime import UTC
+import socket
+from datetime import UTC, timedelta
 from pathlib import Path
 
+import httpx
 import pytest
 from typer.testing import CliRunner
 
 from atw.cli.app import app
 from atw.models.task import BoundProcess, Receipt, ReceiptError
-from atw.utils.timeutil import utc_now
+from atw.notifications.dingtalk import DingTalkNotifier
+from atw.notifications.worker import OutboxWorker
+from atw.utils.timeutil import parse_iso, utc_now
 from conftest import atomic_submit, make_register
 
 
@@ -158,6 +162,69 @@ def test_notifications_snapshot(runner: CliRunner, atw_home, repo) -> None:
     data = json.loads(result.stdout)
     assert data["counts"]["pending"] == 1
     assert data["recent"][0]["event_type"] == "SUCCESS"
+
+
+@pytest.mark.parametrize("code", ["proxy_connect_error", "timeout", "dingtalk_rejected"])
+def test_notifications_diagnoses_and_retains_last_failure(
+    runner, atw_home, repo, monkeypatch, code
+):
+    cfg, paths = atw_home
+    now = utc_now().replace(microsecond=0)
+    failed_at = now
+    private = "test-private-token"
+    webhook = f"http://example.invalid/robot/send?access_token={private}"
+    cfg.notification.retry_base_seconds = 10
+    with repo.db.transaction() as conn:
+        repo.enqueue_notification(
+            conn, task_id="t", event_type="SUCCESS", instance="final:1",
+            channel="dingtalk", title="[ATW] 成功", text="hello", priority=0, now=now,
+        )
+    reject = True
+
+    def handler(request):
+        if reject and code == "timeout":
+            raise httpx.ReadTimeout(str(request.url), request=request)
+        if reject and code == "dingtalk_rejected":
+            return httpx.Response(200, json={
+                "errcode": 310000, "errmsg": f"{request.url} {private} password=user-pass",
+            })
+        return httpx.Response(200, json={"errcode": 0})
+
+    with socket.socket() as closed_port, httpx.Client(transport=httpx.MockTransport(handler)) as mock:
+        closed_port.bind(("127.0.0.1", 0))
+        if code == "proxy_connect_error":
+            monkeypatch.setenv("http_proxy", f"http://person:user-pass@127.0.0.1:{closed_port.getsockname()[1]}")
+            monkeypatch.setenv("no_proxy", "")
+        notifier = DingTalkNotifier(webhook, private, client=None if code == "proxy_connect_error" else mock)
+        try:
+            worker = OutboxWorker(repo, notifier, cfg.notification, clock=lambda: now)
+            assert worker.run_once() == 0
+        finally:
+            worker.close()
+        result = _invoke(runner, paths.root, "notifications", "--json")
+        assert result.exit_code == 0, result.output
+        assert all(value not in result.output for value in (private, "access_token", "sign=", "user-pass"))
+        row = json.loads(result.output)["recent"][0]
+        failure = row["last_failure"]
+        assert failure["code"] == code
+        assert parse_iso(failure["at"]) == failed_at
+        assert parse_iso(row["next_attempt_at"]) == now + timedelta(seconds=10)
+        if code == "proxy_connect_error":
+            assert failure["route"] == "proxy (http, loopback)"
+        result = _invoke(runner, paths.root, "notifications")
+        assert code in result.output
+        assert "下次可重试" in result.output
+
+        reject = False
+        now += timedelta(seconds=10)
+        worker = OutboxWorker(repo, DingTalkNotifier(webhook, private, client=mock),
+                              cfg.notification, clock=lambda: now)
+        assert worker.run_once() == 1
+    result = _invoke(runner, paths.root, "notifications", "--json")
+    delivered = json.loads(result.output)["recent"][0]
+    assert delivered["status"] == "delivered"
+    assert delivered["next_attempt_at"] is None
+    assert delivered["last_failure"] == failure
 
 
 def test_doctor_json_is_secret_free(runner: CliRunner, atw_home, monkeypatch) -> None:

@@ -115,6 +115,16 @@ do not edit SQLite to force delivery. Check `atw notifications --json` for
 actual `channel=dingtalk, status=delivered` records. `mock` delivery counts
 are not evidence of DingTalk delivery.
 
+`atw notifications` reports the latest service session's HTTP client route
+as direct, direct via `NO_PROXY`, or proxy (scheme and loopback/remote only).
+The JSON output contains `service_route` and each item's `last_failure` and
+`next_attempt_at`. The latter is when a pending item becomes eligible for
+retry. The outbox worker cadence and rate limit still apply. A successful retry
+keeps the most recent failure's code, timestamp, summary and route. The error
+summary uses the HTTP status or DingTalk numeric business code when available.
+Webhook URLs, signatures, proxy credentials and raw server responses are
+excluded. `atw notify test` reports the interactive process's route.
+
 ## 4. systemd user service
 
 The installer generates `~/.config/systemd/user/atw.service`:
@@ -172,17 +182,56 @@ the previous unclean session, revalidates process identities, resumes
 MONITORING tasks and sends one `SERVICE_RECOVERED` notification. It does not
 resend the accepted notification.
 
-## 5. Upgrade
+## 5. Verified wheel upgrade and rollback
+
+Run the upgrade as the user who owns the active ATW systemd unit. Provide the
+target wheel and the exact known-good wheel currently installed in the unit's
+Python environment. Keep wheel files from each release so you can use the
+same procedure again. The helper works offline with the environment's existing
+dependencies and can run under system Python 3.10 or later. The service
+interpreter still requires Python 3.11 or later. The helper supports one
+`<python> -m atw --home <path> [--config <path>] service run` unit. Its default
+is `atw.service`. The helper also honors `ATW_CONFIG` from the running service
+when the unit omits `--config`.
 
 ```bash
-systemctl --user stop atw.service
-cd agent-task-watcher && git pull        # or install the new wheel
-# with a venv: .venv/bin/pip install -e .
-systemctl --user start atw.service
+python3 deploy/linux/upgrade.py upgrade \
+  --wheel /path/to/target/agent_task_watcher-NEW-py3-none-any.whl \
+  --previous-wheel /path/to/previous/agent_task_watcher-OLD-py3-none-any.whl
 ```
 
-The SQLite schema is versioned with idempotent migrations. Back up
-`<ATW_HOME>/data/atw.db` before major upgrades.
+The helper checks the unit's interpreter and home against its running process,
+then stages both wheels, checks dependencies and rehearses the schema migration
+on a SQLite copy. It stops only the ATW unit, takes a verified SQLite backup
+including WAL data, and saves the wheels, their hashes and the pre-upgrade
+state in the private directory printed as `Upgrade record`.
+After starting the unit it verifies the installed package, a new service
+session with the target version and systemd PID, fresh samples for the
+previously monitored tasks, and the continued presence of their pending
+outbox entries. `--timeout 90` controls the startup verification window. Allow
+at least one configured sampling interval plus startup time.
+
+If installation or startup verification fails, the helper attempts to
+reinstall and verify the previous wheel against the live database. That path
+accepts the same schema or the verified additive migration from schema 1 to
+schema 2. You can roll back a completed upgrade the same way:
+
+```bash
+python3 deploy/linux/upgrade.py rollback --record /path/from/upgrade-output
+```
+
+For an unrecognized schema combination the unit stays stopped. Review
+post-upgrade writes and external effects such as deliveries and inbox receipts
+before using `rollback --record ... --restore-db`. That option saves a separate
+`pre-restore-*.db` snapshot of the live database, then returns the active
+database to the pre-upgrade point. Reconcile any later receipts, task updates
+and notifications before treating the restored instance as current.
+
+Editable source installations continue to use the source workflow. Preserve
+the current source revision and a consistent SQLite backup, stop the unit,
+update and reinstall with the interpreter from its `ExecStart`, then start and
+verify the unit. Migrate to an installed wheel before using the automated
+wheel upgrade helper.
 
 ## 6. Uninstall
 

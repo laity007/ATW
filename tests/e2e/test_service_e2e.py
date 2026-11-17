@@ -2,11 +2,20 @@ from __future__ import annotations
 
 import json
 import os
+import sqlite3
 import subprocess
 import sys
 import sysconfig
+import threading
 import time
+from contextlib import closing, suppress
+from datetime import datetime
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from itertools import pairwise
 from pathlib import Path
+
+import pytest
+import yaml
 
 from atw.storage.db import Database
 from conftest import atomic_submit, make_register, wait_until
@@ -28,11 +37,13 @@ def _env() -> dict[str, str]:
     return env
 
 
-def _start(home: Path, *, min_sessions: int = 1) -> subprocess.Popen:
+def _start(
+    home: Path, *, min_sessions: int = 1, env_overrides: dict[str, str] | None = None
+) -> subprocess.Popen:
     proc = subprocess.Popen(
         [BASE_PYTHON, "-m", "atw", "--home", str(home), "service", "run"],
         cwd=str(ROOT),
-        env=_env(),
+        env={**_env(), **(env_overrides or {})},
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
     )
@@ -83,6 +94,187 @@ def _task_state(home: Path, task_id: str) -> str | None:
         return row["state"] if row else None
     finally:
         db.close()
+
+
+def _query(home: Path, sql: str, params: tuple = ()) -> list[tuple]:
+    db_uri = (home / "data" / "atw.db").as_uri() + "?mode=ro"
+    with closing(sqlite3.connect(db_uri, uri=True)) as conn:
+        return conn.execute(sql, params).fetchall()
+
+
+def _set_config(home: Path, **changes) -> None:
+    path = home / "config" / "config.yaml"
+    config = yaml.safe_load(path.read_text(encoding="utf-8"))
+    config.update(changes)
+    path.write_text(yaml.safe_dump(config), encoding="utf-8")
+
+
+@pytest.mark.skipif(os.name == "nt", reason="requires POSIX SIGTERM to verify graceful shutdown")
+def test_dingtalk_timeouts_leave_sampling_and_intake_running(atw_home, spawn_worker, tmp_path):
+    _, paths = atw_home
+    home = paths.root
+    _set_config(
+        home,
+        scan_interval_seconds=5,
+        sample_interval_seconds=10,
+        outbox_interval_seconds=2,
+        notification={
+            "provider": "dingtalk",
+            "timeout_seconds": 20,
+            "retry_base_seconds": 5,
+        },
+    )
+    entered = threading.Event()
+    healthy = threading.Event()
+
+    class DingTalkHandler(BaseHTTPRequestHandler):
+        def do_POST(self):
+            self.rfile.read(int(self.headers["Content-Length"]))
+            entered.set()
+            if healthy.wait(timeout=70):
+                with suppress(OSError):
+                    self.send_response(200)
+                    self.send_header("Content-Type", "application/json")
+                    self.end_headers()
+                    self.wfile.write(b'{"errcode":0}')
+
+        def log_message(self, format, *args):
+            pass
+
+    def submit(task_id: str) -> float:
+        proc, run = spawn_worker("long", task_id)
+        data = make_register(
+            tmp_path=tmp_path, proc=proc, request_id=task_id, task_id=task_id, run_dir=run
+        )
+        submitted = time.monotonic()
+        atomic_submit(paths, data)
+        assert _receipt(home, task_id)["status"] == "accepted"
+        return time.monotonic() - submitted
+
+    def notices() -> list[tuple]:
+        return _query(
+            home,
+            "SELECT task_id,status,attempts,delivered_at FROM notification_outbox "
+            "WHERE event_type='MONITOR_ACCEPTED' ORDER BY id",
+        )
+
+    with ThreadingHTTPServer(("127.0.0.1", 0), DingTalkHandler) as server:
+        server_thread = threading.Thread(target=server.serve_forever, daemon=True)
+        server_thread.start()
+        env = {
+            "ATW_DINGTALK_WEBHOOK": f"http://127.0.0.1:{server.server_port}/test?access_token=lab-token",
+            "ATW_DINGTALK_SECRET": "local-test",
+            "HTTP_PROXY": "http://lab-user:lab-password@127.0.0.1:1",
+            "NO_PROXY": "127.0.0.1",
+        }
+        service = None
+        try:
+            service = _start(home, env_overrides=env)
+            submit("first")
+            assert entered.wait(timeout=10)
+            receipt_delay = submit("during-timeout")
+            assert receipt_delay <= 15, receipt_delay
+            wait_until(lambda: all(row[2] >= 1 for row in notices()), timeout=50)
+            assert [row[1] for row in notices()] == ["pending", "pending"]
+            samples = [
+                datetime.fromisoformat(ts)
+                for (ts,) in _query(
+                    home, "SELECT ts FROM observations WHERE task_id='first' ORDER BY ts"
+                )
+            ]
+            assert len(samples) >= 4
+            max_gap = max((later - earlier).total_seconds() for earlier, later in pairwise(samples))
+            assert max_gap <= 15, max_gap
+            healthy.set()
+            wait_until(lambda: all(row[1] == "delivered" for row in notices()), timeout=28)
+            first, second = notices()
+            assert first[3] <= second[3]
+            output = subprocess.check_output(
+                [BASE_PYTHON, "-m", "atw", "--home", str(home), "notifications", "--json"],
+                cwd=ROOT, env=_env(), text=True, encoding="utf-8",
+            )
+            assert not any(secret in output for secret in ("lab-token", "local-test", "lab-password", "sign="))
+            diagnostics = json.loads(output)
+            assert diagnostics["service_route"]["route"] == "direct (NO_PROXY)"
+            assert len(diagnostics["recent"]) == 2
+            for item in diagnostics["recent"]:
+                assert item["last_failure"]["code"] == "timeout"
+                assert item["last_failure"]["route"] == "direct (NO_PROXY)"
+                assert item["next_attempt_at"] is None
+
+            # Leave a third response blocked while shutting down the service.
+            healthy.clear()
+            entered.clear()
+            submit("during-shutdown")
+            assert entered.wait(timeout=10)
+            stopped_at = time.monotonic()
+            service.terminate()
+            assert service.wait(timeout=8) == 0
+            stop_delay = time.monotonic() - stopped_at
+            assert notices()[-1] == ("during-shutdown", "pending", 0, None)
+            healthy.set()
+            service = _start(home, min_sessions=2, env_overrides=env)
+            wait_until(lambda: notices()[-1][1] == "delivered", timeout=15)
+            print(
+                f"receipt={receipt_delay:.3f}s max_sample_gap={max_gap:.3f}s "
+                f"shutdown={stop_delay:.3f}s delivered_after_retry=2 recovered_pending=1"
+            )
+        finally:
+            healthy.set()
+            if service is not None:
+                _stop(service)
+            server.shutdown()
+            server_thread.join(timeout=5)
+
+
+def test_restart_waits_for_late_evidence_and_finalizes_once(atw_home, spawn_worker, tmp_path):
+    _, paths = atw_home
+    home = paths.root
+    _set_config(home, sample_interval_seconds=10, finalize_grace_seconds=15)
+    service = _start(home)
+    try:
+        workers = {}
+        for task_id in ("late-evidence", "missing-evidence"):
+            proc, run = spawn_worker("unknown", task_id)
+            workers[task_id] = (proc, run)
+            data = make_register(
+                tmp_path=tmp_path, proc=proc, request_id=task_id, task_id=task_id, run_dir=run
+            )
+            atomic_submit(paths, data)
+            assert _receipt(home, task_id)["status"] == "accepted"
+        _stop(service)
+        for proc, run in workers.values():
+            spawn_worker.go(run)
+            assert proc.wait(timeout=10) == 0
+        service = _start(home, min_sessions=2)
+        resumed_at = time.monotonic()
+        for task_id in workers:
+            assert _task_state(home, task_id) == "MONITORING"
+
+        run = workers["late-evidence"][1]
+        time.sleep(5)
+        with (run / "run.log").open("a", encoding="utf-8") as fh:
+            fh.write("Simulation completed\n")
+        (run / "results").mkdir()
+        (run / "results" / "result.csv").write_text("a,b\n1,2\n", encoding="utf-8")
+        wait_until(lambda: _task_state(home, "late-evidence") == "SUCCESS", timeout=8)
+        success_delay = time.monotonic() - resumed_at
+        assert _task_state(home, "missing-evidence") == "MONITORING"
+        wait_until(lambda: _task_state(home, "missing-evidence") == "UNKNOWN", timeout=17)
+        unknown_delay = time.monotonic() - resumed_at
+        assert unknown_delay >= 14.5, unknown_delay
+
+        _stop(service)
+        service = _start(home, min_sessions=3)
+        assert _query(
+            home,
+            "SELECT task_id,event_type,COUNT(*) FROM events "
+            "WHERE event_type IN ('SUCCESS','FAILED','UNKNOWN','INTERRUPTED') "
+            "GROUP BY task_id,event_type ORDER BY task_id",
+        ) == [("late-evidence", "SUCCESS", 1), ("missing-evidence", "UNKNOWN", 1)]
+        print(f"late_evidence_success={success_delay:.3f}s missing_evidence_unknown={unknown_delay:.3f}s")
+    finally:
+        _stop(service)
 
 
 def test_service_hot_intake_success_and_mock_notification(atw_home, spawn_worker, tmp_path):

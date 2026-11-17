@@ -4,6 +4,9 @@ import json
 import os
 import time
 
+from typer.testing import CliRunner
+
+from atw.cli.app import app
 from atw.storage.repository import Repository
 from atw.utils.timeutil import utc_now
 from conftest import drive_until_terminal, wait_until
@@ -53,15 +56,30 @@ def test_failure_log(atw_home, repo, supervisor, spawn_worker, register_task):
 def test_unknown_when_process_disappears_without_evidence(
     atw_home, repo, supervisor, spawn_worker, register_task
 ):
-    cfg, paths = atw_home
+    _, paths = atw_home
     proc, run = spawn_worker("unknown", "supervisor-unknown")
     _, receipt = register_task(proc, run)
     assert receipt.status == "accepted"
     (run / "go").write_text("1", encoding="utf-8")
     wait_until(lambda: proc.poll() is not None, timeout=20)
+    result = run / "results" / "result.csv"
+    result.parent.mkdir(exist_ok=True)
+    result.write_text("fresh but missing success marker", encoding="utf-8")
     task = drive_until_terminal(supervisor, repo, "task-1")
     assert task.state == "UNKNOWN"
-    assert task.state != "SUCCESS"
+    runner = CliRunner()
+    text = runner.invoke(app, ["--home", str(paths.root), "show", "task-1"])
+    assert text.exit_code == 0, text.output
+    assert "日志未命中 'Simulation completed'" in text.output
+    output = runner.invoke(app, ["--home", str(paths.root), "show", "task-1", "--json"])
+    assert output.exit_code == 0, output.output
+    diagnostic = json.loads(output.output)["finalize_diagnostics"]
+    assert diagnostic["success"]["children"][2]["truth"] == "TRUE"
+    assert [row["code"] for row in diagnostic["blockers"]] == ["log_not_matched"]
+    notification = next(row for row in repo.recent_notifications() if row["event_type"] == "UNKNOWN")
+    message = json.loads(notification["payload_json"])["text"]
+    assert "待核对的规则" in message
+    assert "日志未命中 'Simulation completed'" in message
 
 
 def test_old_result_file_does_not_trigger_success(
@@ -84,6 +102,23 @@ def test_old_result_file_does_not_trigger_success(
     proc.wait(timeout=10)
     task = drive_until_terminal(supervisor, repo, "task-1")
     assert task.state == "UNKNOWN"
+    assert [row["code"] for row in task.runtime["finalize_diagnostics"]["blockers"]] == ["file_stale"]
+
+
+def test_unknown_evidence_path_becomes_unreadable(
+    atw_home, repo, supervisor, spawn_worker, register_task
+):
+    proc, run = spawn_worker("unknown", "unreadable-result")
+    _, receipt = register_task(proc, run)
+    assert receipt.status == "accepted"
+    (run / "go").write_text("1", encoding="utf-8")
+    wait_until(lambda: proc.poll() is not None, timeout=20)
+    # A directory at the result path is rejected by the real evidence reader.
+    (run / "results" / "result.csv").mkdir(parents=True, exist_ok=True)
+    (run / "run.log").write_text("Simulation completed", encoding="utf-8")
+    task = drive_until_terminal(supervisor, repo, "task-1")
+    blockers = task.runtime["finalize_diagnostics"]["blockers"]
+    assert [(row["code"], row["truth"]) for row in blockers] == [("file_unreadable", "UNKNOWN")]
 
 
 def test_hot_attach_existing_current_run_log(

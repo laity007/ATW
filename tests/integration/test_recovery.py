@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import time
+from datetime import timedelta
 
 from atw.health.bootid import BootIdentity
 from atw.utils.timeutil import utc_now
@@ -102,6 +103,32 @@ def test_process_finished_while_service_down_uses_evidence(
     assert result["finalized"] == 1
     task = repo.get_task("task-1")
     assert task.state == "SUCCESS"
+
+
+def test_restart_keeps_preexisting_exit_deadline(atw_home, repo, supervisor, spawn_worker, register_task):
+    atw_home[0].finalize_grace_seconds = 15
+    proc, run = spawn_worker("unknown", "exit-before-restart")
+    register_task(proc, run)
+    spawn_worker.go(run)
+    assert proc.wait(timeout=10) == 0
+
+    observed = utc_now()
+    now = observed
+    supervisor.clock = lambda: now
+    supervisor.tick()
+    assert repo.get_task("task-1").runtime["exit_observed_at"] == observed.timestamp()
+    _session(repo, clean=True)
+    now = observed + timedelta(seconds=5)
+    result = supervisor.recover(BootIdentity("boot-1", "high", "test"))
+    assert result["resumed"] == 1
+    assert repo.get_task("task-1").runtime["exit_observed_at"] == observed.timestamp()
+
+    now = observed + timedelta(seconds=14)
+    supervisor.tick()
+    assert repo.get_task("task-1").state == "MONITORING"
+    now = observed + timedelta(seconds=15)
+    supervisor.tick()
+    assert repo.get_task("task-1").state == "UNKNOWN"
 
 
 def test_first_install_has_no_recovery_notification(atw_home, repo, supervisor):

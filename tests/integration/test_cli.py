@@ -9,6 +9,7 @@ import httpx
 import pytest
 from typer.testing import CliRunner
 
+from atw import __version__
 from atw.cli.app import app
 from atw.models.task import BoundProcess, Receipt, ReceiptError
 from atw.notifications.dingtalk import DingTalkNotifier
@@ -30,7 +31,30 @@ def test_version(runner: CliRunner, atw_home) -> None:
     cfg, paths = atw_home
     result = _invoke(runner, paths.root, "--version")
     assert result.exit_code == 0
-    assert "atw 1.0.0" in result.output
+    assert f"atw {__version__}" in result.output
+
+
+def test_submit_timeout_and_conflict_before_consumption(runner, atw_home, spawn_worker, tmp_path):
+    _, paths = atw_home
+    proc, run = spawn_worker("long", "submit-timeout")
+    request_id = "same-request"
+    data = make_register(
+        tmp_path=tmp_path, proc=proc, request_id=request_id, task_id="task-timeout", run_dir=run
+    )
+    request = tmp_path / "request.json"
+    request.write_text(json.dumps(data), encoding="utf-8")
+    args = ("submit", str(request), "--wait", "0", "--json")
+    for _ in range(2):
+        result = _invoke(runner, paths.root, *args)
+        assert result.exit_code == 2
+        assert json.loads(result.stdout)["request_id"] == request_id
+    pending = paths.inbox / f"{request_id}.json"
+    data["task"]["name"] = "conflicting name"
+    request.write_text(json.dumps(data), encoding="utf-8")
+    result = _invoke(runner, paths.root, *args)
+    assert result.exit_code == 1
+    assert json.loads(result.stdout)["error"]["code"] == "REQUEST_CONFLICT"
+    assert json.loads(pending.read_text(encoding="utf-8"))["task"]["name"] != "conflicting name"
 
 
 def test_validate_valid_and_invalid(runner: CliRunner, atw_home, tmp_path) -> None:

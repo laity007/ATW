@@ -10,7 +10,9 @@ import threading
 import time
 import uuid
 
-from atw import __version__
+import psutil
+
+from atw import PROTOCOL_PROGRESS, PROTOCOL_TASK, __version__
 from atw.config import AtwPaths, Config, resolve_allowed_roots
 from atw.health.bootid import current_boot_identity
 from atw.intake.scanner import InboxWatcher, WakeEvent, scan_inbox
@@ -97,6 +99,15 @@ class ServiceRunner:
                 pid=os.getpid(),
                 started_at=session_started,
                 service_version=__version__,
+            )
+            repo.set_state(
+                "protocol_capabilities",
+                json.dumps({
+                    "session_id": session_id,
+                    "create_time": psutil.Process().create_time(),
+                    "protocols": [PROTOCOL_TASK, PROTOCOL_PROGRESS],
+                }),
+                session_started,
             )
             route = notifier.route if isinstance(notifier, DingTalkNotifier) else "local"
             repo.set_state(

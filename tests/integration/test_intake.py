@@ -83,6 +83,10 @@ def test_same_request_id_different_content_conflicts(
     receipt = task_service.process_file(path)
     assert receipt is not None and receipt.status == "rejected"
     assert receipt.error is not None and receipt.error.code == REQUEST_CONFLICT
+    published = task_service.receipts.read(data["request_id"])
+    assert published is not None and published["status"] == "accepted"
+    assert (paths.accepted / "req-1.json").exists()
+    assert len(list(paths.rejected.glob("req-1.conflict-*.json"))) == 1
     task = repo.get_task("task-1")
     assert task is not None and task.name == "unit test task"
     assert repo.counts()["tasks"] == 1

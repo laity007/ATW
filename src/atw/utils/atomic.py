@@ -29,9 +29,12 @@ def secure_chmod(path: Path, mode: int = 0o600) -> None:
             pass
 
 
-def atomic_write_bytes(path: Path, data: bytes, mode: int = 0o600) -> None:
+def atomic_write_bytes(
+    path: Path, data: bytes, mode: int = 0o600, *, replace: bool = True, secure_parent: bool = True
+) -> None:
     """Write bytes through a same-directory temp file + fsync + rename."""
-    secure_mkdir(path.parent)
+    if secure_parent:
+        secure_mkdir(path.parent)
     fd, tmp_name = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=path.parent)
     tmp = Path(tmp_name)
     try:
@@ -40,7 +43,10 @@ def atomic_write_bytes(path: Path, data: bytes, mode: int = 0o600) -> None:
             handle.flush()
             os.fsync(handle.fileno())
         secure_chmod(tmp, mode)
-        os.replace(tmp, path)
+        if replace:
+            os.replace(tmp, path)
+        else:
+            os.link(tmp, path)
         # Best-effort directory fsync so the rename is durable on POSIX.
         if os.name != "nt":
             try:

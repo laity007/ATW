@@ -33,7 +33,7 @@ class ReceiptStore:
             data = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, ValueError):
             return None
-        return data if isinstance(data, dict) else None
+        return data if isinstance(data, dict) and data.get("request_id") == request_id else None
 
     def wait(self, request_id: str, timeout: float, poll: float = 0.25) -> dict[str, Any] | None:
         deadline = time.monotonic() + max(0.0, timeout)

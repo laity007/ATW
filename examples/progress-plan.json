@@ -1,0 +1,22 @@
+{
+  "schema": "atw.progress.plan.v1",
+  "task_id": "yolo-screening",
+  "items": [
+    {
+      "id": "S07",
+      "total": 200,
+      "unit": "epoch",
+      "weight": 3,
+      "required": true,
+      "report": "progress/S07.json"
+    },
+    {
+      "id": "S08",
+      "total": 100,
+      "unit": "epoch",
+      "weight": 1,
+      "required": false,
+      "report": "progress/S08.json"
+    }
+  ]
+}

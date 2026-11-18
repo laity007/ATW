@@ -18,6 +18,7 @@ import pytest
 import yaml
 
 from atw.storage.db import Database
+from atw.utils.atomic import atomic_write_text
 from conftest import atomic_submit, make_register, wait_until
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -107,6 +108,136 @@ def _set_config(home: Path, **changes) -> None:
     config = yaml.safe_load(path.read_text(encoding="utf-8"))
     config.update(changes)
     path.write_text(yaml.safe_dump(config), encoding="utf-8")
+
+
+def _cli_json(home, *args, exit_code=0, env=None):
+    result = subprocess.run(
+        [BASE_PYTHON, "-m", "atw", "--home", str(home), *map(str, args), "--json"],
+        env=env or _env(), capture_output=True, encoding="utf-8", timeout=20,
+    )
+    assert result.returncode == exit_code, (result.stdout, result.stderr)
+    return json.loads(result.stdout)
+
+
+def test_handoff_csv_updates_and_survives_restart(atw_home, spawn_worker):
+    _, paths = atw_home
+    home = paths.root
+    _set_config(home, sample_interval_seconds=1, scan_interval_seconds=1)
+
+    def cli(*args):
+        return _cli_json(home, *args)
+
+    proc, run = spawn_worker("success", "handoff-csv")
+    counter = run / "training.csv"
+    atomic_write_text(counter, "epoch,loss\n62,0.5\n")
+    request_file = run / "atw-request.json"
+    args = (
+        "handoff", "--task-id", "csv-task", "--request-id", "csv-req", "--name", "训练",
+        "--pid", proc.pid, "--run-dir", run, "--log", run / "run.log",
+        "--result", run / "results" / "result.csv", "--success-log", "Simulation completed",
+        "--progress-csv", counter, "--progress-column", "epoch", "--total", 200,
+        "--request-out", request_file, "--wait", 10, "--progress-minutes", 1,
+    )
+    preview = cli(*args, "--dry-run")
+    assert preview["progress"]["percent"] == 31
+    assert not request_file.exists()
+
+    def sampled(value):
+        data = cli("show", "csv-task")
+        return (data["progress"].get("sample") or {}).get("percent") == value
+
+    service = _start(home)
+    try:
+        assert cli(*args)["bound_process"]["pid"] == proc.pid
+        assert cli("submit", request_file, "--wait", 1)["status"] == "accepted"
+        assert cli(*args)["status"] == "accepted"
+        wait_until(lambda: sampled(31), timeout=12)
+        _stop(service, hard=True)
+        next_session = 2
+        baseline_src = os.environ.get("ATW_TEST_LEGACY_SRC")
+        if baseline_src:
+            legacy_env = {**_env(), "PYTHONPATH": os.pathsep.join([baseline_src, VENV_SITE])}
+            service = _start(home, min_sessions=2, env_overrides=legacy_env)
+            assert _cli_json(home, "show", "csv-task", env=legacy_env)["task"]["state"] == "MONITORING"
+            assert not cli("status")["active_protocols"]
+            update = run / "legacy-update.json"
+            update.write_text(json.dumps({
+                "protocol": "atw.task.v1", "operation": "update",
+                "request_id": "legacy-update", "task_id": "csv-task",
+                "revision": 2, "expected_revision": 1,
+                "expires_at": "2099-01-01T00:00:00Z",
+                "changes": {"notifications": {"progress_interval_minutes": 1}},
+            }), encoding="utf-8")
+            assert cli("submit", update, "--wait", 10)["status"] == "accepted"
+            _stop(service, hard=True)
+            next_session = 3
+        atomic_write_text(counter, "epoch,loss\n62,0.5\n63,0.49\n")
+        with closing(sqlite3.connect(paths.db_file)) as db:
+            row = db.execute("SELECT runtime_json FROM tasks WHERE task_id='csv-task'").fetchone()
+            runtime = json.loads(row[0])
+            runtime["progress"]["last_epoch"] = 0
+            db.execute("UPDATE tasks SET runtime_json=? WHERE task_id='csv-task'", (json.dumps(runtime),))
+            db.commit()
+        service = _start(home, min_sessions=next_session)
+        wait_until(lambda: sampled(31.5), timeout=12)
+        wait_until(
+            lambda: paths.mock_notifications_file.exists()
+            and "31.5%" in paths.mock_notifications_file.read_text(encoding="utf-8"),
+            timeout=12,
+        )
+        spawn_worker.go(run)
+        proc.wait(timeout=10)
+        wait_until(lambda: _task_state(home, "csv-task") == "SUCCESS", timeout=15)
+    finally:
+        _stop(service)
+
+
+def test_queue_handoff_reports_and_config_removal(atw_home, spawn_worker):
+    _, paths = atw_home
+    home = paths.root
+    _set_config(home, sample_interval_seconds=1, scan_interval_seconds=1)
+    proc, run = spawn_worker("success", "queue-handoff")
+    plan = run / "progress-plan.json"
+    plan.write_bytes((ROOT / "examples" / "progress-plan.json").read_bytes())
+
+    def report(item, state, *options):
+        return _cli_json(
+            home, "progress", "report", "--plan", plan,
+            "--item", item, "--attempt", 1, "--state", state, *options,
+        )
+
+    report("S07", "running", "--completed", 100)
+    report("S08", "completed", "--acceptance", "accepted")
+    service = _start(home)
+    try:
+        receipt = _cli_json(
+            home, "handoff", "--task-id", "yolo-screening", "--name", "筛选",
+            "--pid", proc.pid, "--run-dir", run, "--log", run / "run.log",
+            "--result", run / "results" / "result.csv", "--success-log", "Simulation completed",
+            "--progress-plan", plan, "--wait", 10,
+        )
+        assert receipt["status"] == "accepted"
+
+        def sample():
+            return (_cli_json(home, "show", "yolo-screening")["progress"] or {}).get("sample") or {}
+
+        wait_until(lambda: sample().get("percent") == 62.5, timeout=12)
+        assert sample()["accepted"] == 1
+        report("S07", "completed", "--acceptance", "accepted")
+        wait_until(lambda: sample().get("percent") == 100, timeout=12)
+        assert _task_state(home, "yolo-screening") == "MONITORING"
+        update_path = run / "progress-update.json"
+        update_path.write_text(json.dumps({
+            "protocol": "atw.task.v1.1", "operation": "update",
+            "request_id": "remove-progress", "task_id": "yolo-screening",
+            "revision": 2, "expected_revision": 1,
+            "expires_at": "2099-01-01T00:00:00Z",
+            "changes": {"progress": None},
+        }), encoding="utf-8")
+        assert _cli_json(home, "submit", update_path, "--wait", 10)["revision"] == 2
+        assert _cli_json(home, "show", "yolo-screening")["progress"] is None
+    finally:
+        _stop(service)
 
 
 @pytest.mark.skipif(os.name == "nt", reason="requires POSIX SIGTERM to verify graceful shutdown")

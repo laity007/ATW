@@ -73,6 +73,17 @@ def build(args: argparse.Namespace) -> dict:
     request_id = args.request_id or f"req-{args.task_id}-{uuid.uuid4().hex[:10]}"
     if not ID_RE.match(request_id):
         raise SystemExit(f"非法 request_id: {request_id}")
+    run_started_at = None
+    if args.run_started_at:
+        try:
+            run_started_at = datetime.fromisoformat(args.run_started_at)
+            if run_started_at.tzinfo is None:
+                raise ValueError
+            run_started_at = run_started_at.astimezone(UTC)
+        except ValueError:
+            raise SystemExit("--run-started-at 必须为含时区的 ISO 8601 时间") from None
+    elif args.kind == "pid" and args.create_time is not None:
+        run_started_at = datetime.fromtimestamp(args.create_time, tz=UTC)
     if args.kind == "pid":
         if not args.pid or args.create_time is None:
             raise SystemExit("target.kind=pid 需要 --pid 与 --create-time")
@@ -151,7 +162,8 @@ def build(args: argparse.Namespace) -> dict:
         "task": {
             "name": args.name,
             "project": args.project,
-            "run_started_at": _z(_now()),
+            "run_started_at": run_started_at.isoformat().replace("+00:00", "Z")
+            if run_started_at is not None else None,
             "description": args.description,
         },
         "target": target,
@@ -188,6 +200,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--kind", choices=["pid", "match"], default="pid")
     parser.add_argument("--pid", type=int, default=None)
     parser.add_argument("--create-time", type=float, default=None)
+    parser.add_argument("--run-started-at", help="实际运行开始时间，含时区的 ISO 8601")
     parser.add_argument("--process-name", default=None)
     parser.add_argument("--cmdline-contains", action="append", default=None)
     parser.add_argument("--success-log", default="Simulation completed")

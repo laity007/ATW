@@ -2,23 +2,44 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import sqlite3
 import sys
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
+from uuid import uuid4
 
+import psutil
 import typer
 from typer import Context
 
-from atw import __version__
+from atw import PROTOCOL_PROGRESS, PROTOCOL_TASK, __version__
 from atw.config import AtwPaths, Config, load_config, resolve_allowed_roots
-from atw.errors import RECEIPT_TIMEOUT, AtwError
+from atw.errors import (
+    FILE_TOO_LARGE,
+    PROCESS_NOT_FOUND,
+    RECEIPT_TIMEOUT,
+    REQUEST_CONFLICT,
+    SCHEMA_VALIDATION_FAILED,
+    AtwError,
+)
 from atw.health.bootid import current_boot_identity
 from atw.health.doctor import run_doctor
 from atw.intake.receipts import ReceiptStore
-from atw.models.task import Receipt, parse_request_json
+from atw.intake.submit import active_protocols, read_request, submit_request
+from atw.models.progress import Acceptance, ItemReport, State
+from atw.models.task import Receipt, Target, parse_request_json, request_content_hash
+from atw.monitoring.process import ProcessMonitor
+from atw.monitoring.progress import (
+    PROGRESS_ADAPTER,
+    PROGRESS_KEY,
+    load_plan,
+    normalize_progress,
+    sample_progress,
+    write_report,
+)
 from atw.notifications.dingtalk import DingTalkNotifier
 from atw.notifications.factory import build_notifier
 from atw.notifications.templates import format_blocker, render_test_message
@@ -26,14 +47,17 @@ from atw.service.lock import SingleInstanceLock
 from atw.service.runner import ServiceRunner
 from atw.storage.db import Database
 from atw.storage.repository import Repository
+from atw.utils.atomic import atomic_write_bytes, json_dumps
 from atw.utils.pathsafe import validate_read_path
-from atw.utils.timeutil import utc_now
+from atw.utils.timeutil import dt_to_z, epoch_to_dt, parse_iso, utc_now
 
 app = typer.Typer(
     add_completion=False,
     no_args_is_help=True,
-    help="Agent Task Watcher V1.0 — 只监督与通知，不控制计算进程。",
+    help="Agent Task Watcher — 只监督与通知，不控制计算进程。",
 )
+progress_app = typer.Typer(no_args_is_help=True)
+app.add_typer(progress_app, name="progress")
 
 
 class CliState:
@@ -156,6 +180,7 @@ def status(json_output: bool = typer.Option(False, "--json")) -> None:
                 "detail": boot.detail,
             },
             "last_session": session,
+            "active_protocols": active_protocols(paths, repo),
             "counts": counts,
             "notification": {
                 "provider": cfg.notification.provider,
@@ -267,6 +292,7 @@ def show(
         data = {
             "task": record.snapshot(),
             "finalize_diagnostics": record.runtime.get("finalize_diagnostics"),
+            "progress": record.runtime.get(PROGRESS_KEY),
             "revisions": revisions,
             "processes": processes,
             "observations": observations,
@@ -277,6 +303,11 @@ def show(
             return
         typer.echo(f"任务: {record.task_id}  {record.name}")
         typer.echo(f"状态: {record.state}  revision={record.revision}")
+        work = data["progress"]
+        if work and work.get("sample"):
+            sample = work["sample"]
+            value = sample["percent"]
+            typer.echo(f"执行进度: {f'{value:.1f}%' if value is not None else '未知'} ({sample['status']})")
         typer.echo(f"项目: {record.project or '-'}")
         typer.echo(
             f"运行开始: {record.run_started_at.isoformat() if record.run_started_at else '-'}"
@@ -366,7 +397,8 @@ def validate(
         raise typer.Exit(1) from None
     roots = resolve_allowed_roots(cfg)
     path_errors: list[str] = []
-    evidence = getattr(model, "evidence", None)
+    source = model if model.operation == "register" else model.changes
+    evidence = source.evidence
     if evidence is not None:
         for field_name, value, is_dir in (
             ("run_directory", evidence.run_directory, True),
@@ -383,6 +415,11 @@ def validate(
                 validate_read_path(value, roots, field=f"result_files[{index}]")
             except AtwError as exc:
                 path_errors.append(f"result_files[{index}]: {exc.message}")
+        if getattr(source, "progress", None) is not None:
+            try:
+                normalize_progress(source.progress, roots, evidence.run_directory)
+            except (AtwError, ValueError) as exc:
+                path_errors.append(str(exc))
     result = {
         "valid": True,
         "operation": model.operation,
@@ -413,19 +450,19 @@ def receipt(
     cfg, paths = _load_or_exit(json_output)
     store = ReceiptStore(paths.receipts)
     data = store.wait(request_id, wait) if wait > 0 else store.read(request_id)
-    if data is None:
+    try:
+        repo, db = _repo(paths)
         try:
-            repo, db = _repo(paths)
-            try:
-                row = repo.get_request(request_id)
-                if row is not None:
-                    data = json.loads(row["receipt_json"])
-                    Receipt.model_validate(data)
-                    store.write(Receipt.model_validate(data))
-            finally:
-                db.close()
-        except Exception:
-            data = None
+            row = repo.get_request(request_id)
+            if row is not None:
+                canonical = Receipt.model_validate_json(row["receipt_json"])
+                if data != canonical.to_json_dict():
+                    data = canonical.to_json_dict()
+                    store.write(canonical)
+        finally:
+            db.close()
+    except (sqlite3.Error, ValueError, OSError):
+        pass
     if data is None:
         payload = {
             "protocol": "atw.receipt.v1",
@@ -459,6 +496,249 @@ def receipt(
             )
     if data.get("status") != "accepted":
         raise typer.Exit(1)
+
+
+def _submission_error(exc: Exception, json_output: bool, request_id: str | None = None) -> None:
+    error = exc if isinstance(exc, AtwError) else AtwError(
+        SCHEMA_VALIDATION_FAILED, str(exc)
+    )
+    timeout = error.code == RECEIPT_TIMEOUT
+    if json_output:
+        _emit_json({
+            "request_id": request_id, "status": "timeout" if timeout else "rejected",
+            "monitoring": False, "error": error.as_dict(),
+        })
+    else:
+        typer.echo(str(error), err=True)
+    raise typer.Exit(2 if timeout else 1) from None
+
+
+def _submission_result(receipt_data: Receipt, json_output: bool) -> None:
+    if json_output:
+        _emit_json(receipt_data.to_json_dict())
+    else:
+        typer.echo(f"{receipt_data.status} request={receipt_data.request_id} task={receipt_data.task_id}")
+        if receipt_data.error:
+            typer.echo(f"{receipt_data.error.code}: {receipt_data.error.message}", err=True)
+    if receipt_data.status != "accepted" or not receipt_data.monitoring:
+        raise typer.Exit(1)
+
+
+@app.command("submit")
+def submit(
+    file: Path,
+    wait: int = typer.Option(30, min=0, max=3600),
+    json_output: bool = typer.Option(False, "--json"),
+) -> None:
+    """原子投递已准备好的请求，并按请求内容核对回执。"""
+    cfg, paths = _load_or_exit(json_output)
+    request_id = None
+    try:
+        raw = read_request(file, cfg.max_json_bytes)
+        request_id = parse_request_json(raw)[0].request_id
+        repo, db = _repo(paths)
+        try:
+            result = submit_request(raw, cfg, paths, repo, wait)
+        finally:
+            db.close()
+    except (AtwError, OSError, ValueError, sqlite3.Error) as exc:
+        _submission_error(exc, json_output, request_id)
+        return
+    _submission_result(result, json_output)
+
+
+@app.command("handoff")
+def handoff(
+    task_id: str = typer.Option(...),
+    name: str = typer.Option(...),
+    run_dir: Path = typer.Option(...),
+    log: Path = typer.Option(...),
+    result: Path = typer.Option(...),
+    success_log: str = typer.Option(...),
+    pid: int | None = typer.Option(None, min=1),
+    create_time: float | None = typer.Option(None),
+    process_name: str | None = typer.Option(None),
+    cmdline_contains: list[str] | None = typer.Option(None),
+    request_id: str | None = typer.Option(None),
+    project: str | None = typer.Option(None),
+    run_started_at: str | None = typer.Option(None),
+    failure_log: list[str] | None = typer.Option(None),
+    progress_csv: Path | None = typer.Option(None),
+    progress_column: str | None = typer.Option(None),
+    progress_plan: Path | None = typer.Option(None),
+    progress_unknown: str | None = typer.Option(None),
+    counter_base: int = typer.Option(1, min=0, max=1),
+    total: int | None = typer.Option(None, min=1),
+    unit: str = typer.Option("epoch"),
+    progress_minutes: int = typer.Option(30, min=0, max=10080),
+    request_out: Path | None = typer.Option(None),
+    dry_run: bool = typer.Option(False),
+    wait: int = typer.Option(30, min=0, max=3600),
+    json_output: bool = typer.Option(False, "--json"),
+) -> None:
+    """接管已启动的任务。按 PID 或唯一进程匹配绑定。"""
+    cfg, paths = _load_or_exit(json_output, create_dirs=not dry_run)
+    try:
+        roots = resolve_allowed_roots(cfg)
+        run = validate_read_path(str(run_dir.resolve()), roots, require_exists=True, expect_directory=True)
+        log_path = validate_read_path(str(log.resolve()), roots, field="log")
+        result_path = validate_read_path(str(result.resolve()), roots, field="result")
+        if not success_log.strip():
+            raise ValueError("必须指定真实的成功标记")
+        if sum(value is not None for value in (progress_csv, progress_plan, progress_unknown)) != 1:
+            raise ValueError("请选择一个进度来源，或用 --progress-unknown 说明原因")
+        if progress_unknown is not None and not progress_unknown.strip():
+            raise ValueError("--progress-unknown 需要原因")
+        saved = None
+        stored = None
+        if request_out and request_out.exists():
+            saved = read_request(request_out, cfg.max_json_bytes)
+            _, stored = parse_request_json(saved)
+        request_id = request_id or (stored["request_id"] if stored else f"req-{uuid4().hex}")
+        monitor = ProcessMonitor(create_time_tolerance=cfg.process_create_time_tolerance_seconds)
+        description = f"进度未知：{progress_unknown}" if progress_unknown else ""
+        if pid is not None and not process_name and not cmdline_contains:
+            observed = create_time
+            if observed is None:
+                observed = stored["target"].get("create_time_epoch") if stored else None
+            if observed is None:
+                observed = psutil.Process(pid).create_time()
+            target = Target(kind="pid", pid=pid, create_time_epoch=observed)
+            identity = monitor.validate_pid_target(target).identity if not stored else None
+        elif pid is None and create_time is None and process_name and cmdline_contains:
+            match = Target(
+                kind="match", name=process_name, cmdline_contains=cmdline_contains, match_mode="unique"
+            )
+            fingerprint = hashlib.sha256(match.model_dump_json().encode("utf-8")).hexdigest()
+            description = "\n".join(filter(None, [description, f"进程匹配摘要：{fingerprint}"]))
+            identity = monitor.match_target(match).identity if not stored else None
+            target = Target.model_validate(stored["target"]) if stored else Target(
+                kind="pid", pid=identity.pid, create_time_epoch=identity.create_time_epoch
+            )
+        else:
+            raise ValueError("请选择 --pid 或 --process-name 加 --cmdline-contains")
+        if run_started_at is not None:
+            start = datetime.fromisoformat(run_started_at)
+            if start.tzinfo is None:
+                raise ValueError("--run-started-at 必须是含时区的 ISO 8601 时间")
+        elif stored:
+            start = parse_iso(stored["task"]["run_started_at"])
+        else:
+            start = epoch_to_dt(identity.create_time_epoch)
+        progress = None
+        if progress_csv is not None:
+            progress = PROGRESS_ADAPTER.validate_python({
+                "kind": "csv", "path": str(progress_csv.resolve()), "column": progress_column,
+                "counter_base": counter_base, "total": total, "unit": unit,
+            })
+            progress = normalize_progress(progress, roots, str(run))
+        if progress_plan is not None:
+            plan_id, progress = load_plan(progress_plan.resolve(), roots, str(run))
+            if plan_id != task_id:
+                raise ValueError("进度清单 task_id 与本次任务不符")
+        request = {
+            "protocol": PROTOCOL_PROGRESS if progress is not None else PROTOCOL_TASK,
+            "operation": "register", "request_id": request_id, "task_id": task_id, "revision": 1,
+            "expires_at": stored["expires_at"] if stored else dt_to_z(utc_now() + timedelta(hours=1)),
+            "task": {
+                "name": name, "project": project, "run_started_at": dt_to_z(start),
+                "description": description or None,
+            },
+            "target": target.model_dump(mode="json", exclude_none=True),
+            "evidence": {
+                "run_directory": str(run), "log": {"path": str(log_path)},
+                "result_files": [str(result_path)],
+            },
+            "rules": {
+                "success": {"all": [
+                    {"kind": "process_tree_exited"},
+                    {"kind": "log_contains", "value": success_log},
+                    {"kind": "file_exists_fresh", "path": str(result_path)},
+                ]},
+                "failure": {"any": [
+                    {"kind": "log_contains", "value": marker} for marker in failure_log
+                ]} if failure_log else None,
+            },
+            "notifications": {"progress_interval_minutes": progress_minutes},
+        }
+        if progress is not None:
+            request["progress"] = progress.model_dump(mode="json", exclude_none=True)
+        raw = json_dumps(request).encode("utf-8")
+        if len(raw) > cfg.max_json_bytes:
+            raise AtwError(FILE_TOO_LARGE, "请求超过服务配置的字节限制")
+        model, data = parse_request_json(raw)
+        if stored and request_content_hash(stored) != request_content_hash(data):
+            raise AtwError(REQUEST_CONFLICT, "参数与保存的原请求不同")
+        if dry_run:
+            _emit_json({
+                "request": data,
+                "run_start_source": "explicit" if run_started_at else "saved" if stored else "process",
+                "progress": sample_progress(
+                    progress, task_id=task_id, run_dir=str(run), roots=roots,
+                    started_at=start, now=utc_now(),
+                ) if progress else None,
+            })
+            return
+        if request_out and saved is None:
+            atomic_write_bytes(request_out, raw, replace=False, secure_parent=False)
+        repo, db = _repo(paths)
+        try:
+            response = submit_request(saved or raw, cfg, paths, repo, wait)
+        finally:
+            db.close()
+        if response.status == "accepted":
+            bound = response.bound_process
+            if (
+                response.request_id != model.request_id or response.task_id != task_id
+                or response.revision != 1 or bound is None
+                or (identity and (bound.pid != identity.pid or
+                    abs(bound.create_time_epoch - identity.create_time_epoch) >
+                    cfg.process_create_time_tolerance_seconds))
+            ):
+                raise AtwError("PROCESS_IDENTITY_MISMATCH", "回执与交接时确认的进程或任务不一致")
+            monitor.validate_pid_target(Target(
+                kind="pid", pid=bound.pid, create_time_epoch=bound.create_time_epoch
+            ))
+    except (AtwError, OSError, ValueError, sqlite3.Error, psutil.Error) as exc:
+        if isinstance(exc, psutil.NoSuchProcess):
+            exc = AtwError(PROCESS_NOT_FOUND, str(exc))
+        _submission_error(exc, json_output, request_id)
+        return
+    _submission_result(response, json_output)
+
+
+@progress_app.command("report")
+def report_progress(
+    plan: Path = typer.Option(...),
+    item: str = typer.Option(...),
+    attempt: int = typer.Option(..., min=1),
+    state: State = typer.Option(...),
+    completed: int | None = typer.Option(None, min=0),
+    acceptance: Acceptance | None = typer.Option(None),
+    run_dir: Path | None = typer.Option(None),
+    json_output: bool = typer.Option(False, "--json"),
+) -> None:
+    """写入本次运行的单个子任务状态。"""
+    cfg, _ = _load_or_exit(json_output, create_dirs=False)
+    try:
+        roots = resolve_allowed_roots(cfg)
+        run = str((run_dir or plan.parent).resolve())
+        task_id, queue = load_plan(plan.resolve(), roots, run)
+        entry = next((entry for entry in queue.items if entry.id == item), None)
+        if entry is None:
+            raise ValueError("清单中没有该子任务")
+        report = ItemReport(
+            task_id=task_id, item_id=item, attempt=attempt, state=state, completed=completed,
+            acceptance=acceptance, updated_at=utc_now(),
+        )
+        write_report(report, entry, roots, run)
+    except (AtwError, OSError, ValueError) as exc:
+        _submission_error(exc, json_output)
+        return
+    if json_output:
+        _emit_json(report.model_dump(mode="json", exclude_none=True))
+    else:
+        typer.echo(f"{item} · {state} · attempt {attempt}")
 
 
 @app.command("doctor")

@@ -9,13 +9,15 @@ from atw.utils.atomic import secure_mkdir
 
 
 class SingleInstanceLock:
-    def __init__(self, path: Path):
+    def __init__(self, path: Path, *, secure_parent: bool = True):
         self.path = Path(path)
+        self.secure_parent = secure_parent
         self._handle = None
         self._locked = False
 
     def acquire(self) -> bool:
-        secure_mkdir(self.path.parent)
+        if self.secure_parent:
+            secure_mkdir(self.path.parent)
         handle = open(self.path, "a+b")
         try:
             if os.name == "nt":

@@ -5,6 +5,10 @@ Machine-readable schema: [`schemas/task-v1.schema.json`](../schemas/task-v1.sche
 and [`schemas/receipt-v1.schema.json`](../schemas/receipt-v1.schema.json).
 Examples: [`examples/`](../examples/).
 
+ATW 1.1 also accepts [`atw.task.v1.1`](../schemas/task-v1.1.schema.json) for progress
+configuration. It uses the same inbox and receipt format. Detailed fields and
+upgrade behavior are in [Agent handoff and progress](agent-progress.md).
+
 ## 1. Directory contract
 
 `ATW_HOME` is resolved from `--home`, then `ATW_HOME`, then the platform default

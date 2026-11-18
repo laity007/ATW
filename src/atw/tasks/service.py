@@ -11,6 +11,7 @@ from dataclasses import replace
 from datetime import datetime
 from pathlib import Path
 from typing import Any
+from uuid import uuid4
 
 from atw.config import AtwPaths, Config, resolve_allowed_roots
 from atw.errors import (
@@ -38,6 +39,7 @@ from atw.models.task import (
 )
 from atw.monitoring.evidence import evidence_paths
 from atw.monitoring.process import ProcessMonitor
+from atw.monitoring.progress import PROGRESS_ADAPTER, PROGRESS_KEY, normalize_progress
 from atw.notifications.templates import render_event
 from atw.storage.records import TaskRecord
 from atw.storage.repository import Repository
@@ -161,7 +163,7 @@ class TaskService:
             )
 
         content_hash = request_content_hash(data)
-        existing = self.repo.get_request(model.request_id)
+        existing = self.repo.get_request_for_file(model.request_id)
         if existing is not None:
             if existing["content_hash"] == content_hash:
                 logger.info("幂等重放 request_id=%s", model.request_id)
@@ -218,6 +220,7 @@ class TaskService:
             )
         try:
             self._validate_evidence(model.evidence, model.rules)
+            progress = self._progress_config(getattr(model, "progress", None), model.evidence)
         except AtwError as exc:
             return self._reject_model(
                 model, code=exc.code, message=exc.message, content_hash=content_hash, now=now
@@ -246,6 +249,8 @@ class TaskService:
                 else None
             ),
         }
+        if progress is not None:
+            runtime[PROGRESS_KEY] = {"config": progress}
         record = TaskRecord(
             task_id=model.task_id,
             name=model.task.name,
@@ -413,12 +418,23 @@ class TaskService:
         )
         try:
             self._validate_evidence(new_evidence, new_rules)
+            current_progress = task.runtime.get(PROGRESS_KEY, {}).get("config")
+            if "progress" in changes.model_fields_set:
+                requested_progress = changes.progress
+            else:
+                requested_progress = PROGRESS_ADAPTER.validate_python(current_progress) if current_progress else None
+            progress = self._progress_config(requested_progress, new_evidence)
         except AtwError as exc:
             return self._reject_model(
                 model, code=exc.code, message=exc.message, content_hash=content_hash, now=now
             )
 
         runtime = dict(task.runtime)
+        if progress != current_progress:
+            if progress is None:
+                runtime.pop(PROGRESS_KEY, None)
+            else:
+                runtime[PROGRESS_KEY] = {"config": progress}
         rules_changed = changes.rules is not None
         if rules_changed:
             runtime["rules_hash"] = _rules_hash(new_rules)
@@ -474,7 +490,7 @@ class TaskService:
                     updated,
                     request_id=model.request_id,
                     changes_json=_raw_json(
-                        changes.model_dump(mode="json", by_alias=True, exclude_none=True)
+                        data["changes"]
                     ),
                     now=now,
                 )
@@ -523,6 +539,18 @@ class TaskService:
         return receipt
 
     # ---------------------------------------------------------------- helpers
+    def _progress_config(self, progress, evidence) -> dict[str, Any] | None:
+        if progress is None:
+            return None
+        if evidence is None:
+            raise AtwError(SCHEMA_VALIDATION_FAILED, "进度来源需要 evidence.run_directory")
+        try:
+            return normalize_progress(progress, self.roots, evidence.run_directory).model_dump(
+                mode="json", exclude_none=True
+            )
+        except ValueError as exc:
+            raise AtwError(SCHEMA_VALIDATION_FAILED, str(exc)) from exc
+
     def _validate_evidence(self, evidence: Any, rules: Any) -> None:
         if evidence is not None:
             validate_read_path(
@@ -637,7 +665,7 @@ class TaskService:
         )
         if persist:
             try:
-                existing = self.repo.get_request(request_id)
+                existing = self.repo.get_request_for_file(request_id)
                 if existing is None:
                     with self.repo.db.transaction() as conn:
                         self.repo.insert_request(
@@ -684,13 +712,21 @@ class TaskService:
         )
 
     def _publish(self, source: Path, receipt: Receipt) -> None:
+        row = self.repo.get_request_for_file(receipt.request_id)
+        if row is None:
+            logger.error("请求尚未落库，稍后重试 %s", source)
+            return
+        canonical = Receipt.model_validate_json(row["receipt_json"])
         try:
-            self.receipts.write(receipt)
+            self.receipts.write(canonical)
         except OSError:
             logger.exception("写入回执失败 request_id=%s（将在下次扫描重放）", receipt.request_id)
             return
-        target_dir = self.paths.accepted if receipt.status == "accepted" else self.paths.rejected
-        target = target_dir / source.name
+        if canonical.to_json_dict() != receipt.to_json_dict() or source.stem != canonical.request_id:
+            target = self.paths.rejected / f"{source.stem}.conflict-{uuid4().hex}.json"
+        else:
+            target_dir = self.paths.accepted if receipt.status == "accepted" else self.paths.rejected
+            target = target_dir / source.name
         try:
             os.replace(source, target)
         except OSError:

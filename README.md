@@ -1,8 +1,8 @@
-# Agent Task Watcher (ATW) V1.0
+# Agent Task Watcher (ATW) 1.1
 
-ATW 是一个**零大模型调用**的本地计算任务监督程序：AI Agent 通过 SSH 以 JSON
-文件把长期运行的计算任务交接给服务器上的 ATW，AI 会话退出后，ATW 持续监督
-进程、日志、结果文件和 GPU 指标，并通过钉钉群机器人单向通知最终状态。
+ATW 是一个**零大模型调用**的本地计算任务监督程序。AI Agent 在计算节点用一条
+`atw handoff` 命令交接已启动的任务。AI 会话退出后，ATW 持续采集进程、日志、
+结果文件、GPU 指标和配置的任务进度，再通过钉钉机器人发送进度、告警或终态。
 
 > ATW 只**监督与通知**。它不会启动、停止、重启或重试任何计算进程。
 
@@ -20,7 +20,11 @@ ATW 是一个**零大模型调用**的本地计算任务监督程序：AI Agent 
   去重、持久化 outbox 与指数退避重试。
 - **不提供** Web UI、HTTP API、钉钉聊天命令、计算进程控制、AMD/Intel GPU 遥测。
 
-## 验收状态（2026-11-10）
+## 验收状态
+
+1.1.0 的 Windows、Ubuntu、回退和通知验收见 [Agent 交接和进度](docs/agent-progress.md#110-验收记录)。
+
+### 1.0.0 基线（2026-11-10）
 
 - Windows：`116 passed, 1 skipped`（WDDM 下 NVML 不提供进程级显存，按 UNKNOWN
   处理，不是 0）。
@@ -92,10 +96,9 @@ atw service run
 ### 4. AI Agent 交接
 
 阅读 [`skills/atw-task-handoff/SKILL.md`](skills/atw-task-handoff/SKILL.md)。
-Skill 每次调用都会询问日志路径与结果输出路径（均可留空/默认），生成符合
-Schema 的 JSON，通过 SSH 原子投递到 `tasks/inbox/`，并校验
-`atw receipt <request_id> --wait 30 --json` 的 `accepted` 回执与
-PID + 创建时间。失败时不会宣称接管成功。
+在计算节点运行 `atw handoff`，自动校验进程身份、原子投递并返回绑定回执。
+使用现有 CSV 采集单项进度，或用队列清单配置多个子任务的执行权重和验收状态。
+完整请求可通过 `atw submit FILE` 提交。 [接入命令与故障恢复](docs/agent-progress.md)
 
 ## CLI
 
@@ -105,6 +108,9 @@ atw list [--state MONITORING] [--json]
 atw show <task-id> [--json]
 atw history [--limit N] [--json]
 atw validate <file.json> [--json]
+atw handoff [OPTIONS]
+atw submit <file.json> [--wait SECONDS] [--json]
+atw progress report [OPTIONS]
 atw receipt <request-id> [--wait SECONDS] [--json]
 atw doctor [--json]
 atw notify test
@@ -120,6 +126,7 @@ atw service run
 成功规则树、失败规则树、判定触发原因和逐项证据缺口。旧任务可查看已保存的证据摘要。
 
 `atw notifications` 显示后台服务的脱敏路由、队列条目的最近失败及重试时间。
+`atw show --json` 的 `progress` 给出配置、最新执行比例、验收计数和每项来源状态。
 Linux wheel 升级与回滚见 [Linux 部署](docs/deployment-linux.md#5-verified-wheel-upgrade-and-rollback)。
 
 ## 协议与目录

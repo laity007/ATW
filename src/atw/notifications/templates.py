@@ -90,6 +90,52 @@ def _evidence_line(record: TaskRecord) -> list[str]:
     return lines
 
 
+def _progress_message(record: TaskRecord, payload: dict[str, Any], node: str) -> NotificationMessage:
+    name = " ".join(record.name.split())
+    sample = payload.get("work_progress")
+    elapsed = duration_text(payload.get("elapsed_seconds") or 0)
+    status = "进度未知" if (record.description or "").startswith("进度未知：") else "监控中"
+    details = []
+    current = []
+    if sample:
+        percent = sample["percent"]
+        if percent is not None:
+            display = min(percent, 99.9) if percent < 100 else 100
+            status = f"执行 {display:.1f}".removesuffix(".0") + "%"
+            if sample["status"] == "snapshot":
+                details.append(f"快照 {sample['snapshot_at']}")
+        elif sample["acceptance_available"]:
+            accepted = 100 * sample["accepted"] / sample["total_items"]
+            status = f"已验收 {accepted:.1f}".removesuffix(".0") + "%"
+        else:
+            status = "进度未知"
+        if sample["acceptance_available"]:
+            details.append(f"已验收 {sample['accepted']}/{sample['total_items']}")
+            if sample["required_total"] and sample["required_total"] != sample["total_items"]:
+                details.append(f"必做 {sample['required_accepted']}/{sample['required_total']}")
+        items = sample["items"]
+        for state, label in (("queued", "排队"), ("failed", "失败"), ("skipped", "跳过")):
+            count = sum(item["state"] == state for item in items)
+            if count:
+                details.append(f"{label} {count}")
+        active = [item for item in items if item["state"] == "running"]
+        for item in active[:2]:
+            prefix = f"{item['id']} " if sample["kind"] == "queue" else ""
+            count = item["completed"]
+            current.append(
+                f"{prefix}{count}/{item['total']} {item['unit']}" if count is not None
+                else f"{prefix}进度未知"
+            )
+        if len(active) > 2:
+            current.append(f"另有 {len(active) - 2} 项运行中")
+    title = _title("PROGRESS", f"{name} · {status}")
+    lines = [f"### {title}"]
+    if details:
+        lines.extend(["", " · ".join(details)])
+    lines.extend(["", " · ".join([*current, node, f"已运行 {elapsed}"])])
+    return NotificationMessage(title=title, text="\n".join(lines))
+
+
 def render_event(
     event_type: str,
     record: TaskRecord,
@@ -97,6 +143,8 @@ def render_event(
     *,
     node_label: str,
 ) -> NotificationMessage:
+    if event_type == "PROGRESS":
+        return _progress_message(record, payload, node_label)
     title = _title(event_type, payload.get("title"))
     lines: list[str] = [f"### {title}", ""]
     lines.extend(_base_lines(record, node_label))
@@ -154,15 +202,10 @@ def render_event(
                 "- **任务状态：** 继续监控（WARNING 是事件，不替代主状态）",
             ]
         )
-    elif event_type == "PROGRESS":
-        lines.extend(
-            [
-                "- **当前状态：** MONITORING",
-                f"- **已运行：** {duration_text(payload.get('elapsed_seconds') or 0)}",
-                f"- **CPU（树聚合）：** {payload.get('cpu_percent') if payload.get('cpu_percent') is not None else 'UNKNOWN'}%",
-                f"- **GPU：** {_gpu_summary(payload.get('gpu'))}",
-            ]
-        )
+        conditions = "；".join(payload.get("condition_details") or [])
+        message = str(payload.get("message") or payload.get("detail") or "")
+        if conditions and conditions != message:
+            lines.append(f"- **触发条件：** {_clip(conditions)}")
     else:
         for key, value in payload.items():
             if key in {"title", "gpu"}:

@@ -15,6 +15,7 @@ from atw.models.task import NotificationSettings, RulesSpec
 from atw.monitoring.evidence import EvidenceMonitor
 from atw.monitoring.gpu import GpuMonitor, GpuSnapshot
 from atw.monitoring.process import ProcessIdentity, ProcessMonitor, ProcessSnapshot
+from atw.monitoring.progress import PROGRESS_ADAPTER, PROGRESS_KEY, sample_progress
 from atw.notifications.templates import (
     render_daily_health,
     render_event,
@@ -108,6 +109,17 @@ class Supervisor:
             known.append(root_identity)
         snap = self.processes.snapshot(record.target, known, root_identity)
         evidence_snap, runtime = self.evidence.refresh(record, record.runtime)
+        work = runtime.get(PROGRESS_KEY)
+        if work and record.evidence:
+            work["sample"] = sample_progress(
+                PROGRESS_ADAPTER.validate_python(work["config"]),
+                task_id=record.task_id,
+                run_dir=record.evidence.run_directory,
+                roots=self.roots,
+                started_at=record.run_started_at or record.accepted_at or now,
+                now=now,
+                previous=work.get("sample"),
+            )
 
         rules_hash = _rules_hash(record.rules)
         if runtime.get("rules_hash") != rules_hash:
@@ -427,6 +439,7 @@ class Supervisor:
                     "elapsed_seconds": elapsed,
                     "cpu_percent": snap.cpu_percent,
                     "gpu": gpu_metrics,
+                    "work_progress": runtime.get(PROGRESS_KEY, {}).get("sample"),
                 },
             }
         )

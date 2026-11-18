@@ -25,13 +25,14 @@ from pydantic import (
     model_validator,
 )
 
-from atw import PROTOCOL_RECEIPT, PROTOCOL_TASK
+from atw import PROTOCOL_PROGRESS, PROTOCOL_RECEIPT, PROTOCOL_TASK
 from atw.errors import (
     INVALID_JSON,
     SCHEMA_VALIDATION_FAILED,
     UNSUPPORTED_PROTOCOL,
     AtwError,
 )
+from atw.models.progress import ProgressSpec
 from atw.utils.timeutil import dt_to_z
 
 ID_PATTERN = r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"
@@ -343,6 +344,26 @@ TaskRequest = Annotated[
 _REQUEST_ADAPTER: TypeAdapter[Any] = TypeAdapter(TaskRequest)
 
 
+class ProgressRegisterRequest(RegisterRequest):
+    protocol: Literal["atw.task.v1.1"] = PROTOCOL_PROGRESS  # type: ignore[assignment]
+    progress: ProgressSpec | None = None
+
+
+class ProgressUpdateChanges(UpdateChanges):
+    progress: ProgressSpec | None = None
+
+
+class ProgressUpdateRequest(UpdateRequest):
+    protocol: Literal["atw.task.v1.1"] = PROTOCOL_PROGRESS  # type: ignore[assignment]
+    changes: ProgressUpdateChanges
+
+
+ProgressTaskRequest = Annotated[
+    ProgressRegisterRequest | ProgressUpdateRequest, Field(discriminator="operation")
+]
+_PROGRESS_ADAPTER: TypeAdapter[Any] = TypeAdapter(ProgressTaskRequest)
+
+
 def _condition_has_evidence(cond: Condition) -> bool:
     if cond.kind in {"log_contains", "file_exists_fresh", "file_size_above"}:
         return True
@@ -355,7 +376,8 @@ def _condition_has_evidence(cond: Condition) -> bool:
 
 
 def validate_request_dict(data: dict[str, Any]) -> RegisterRequest | UpdateRequest:
-    return _REQUEST_ADAPTER.validate_python(data)
+    adapter = _PROGRESS_ADAPTER if data.get("protocol") == PROTOCOL_PROGRESS else _REQUEST_ADAPTER
+    return adapter.validate_python(data)
 
 
 def _compact_errors(exc: ValidationError) -> str:
@@ -373,13 +395,13 @@ def parse_request_json(raw: bytes) -> tuple[RegisterRequest | UpdateRequest, dic
         raise AtwError(INVALID_JSON, f"请求不是合法 UTF-8 JSON: {exc}") from exc
     if not isinstance(data, dict):
         raise AtwError(SCHEMA_VALIDATION_FAILED, "请求顶层必须是 JSON 对象")
-    if data.get("protocol") != PROTOCOL_TASK:
+    if data.get("protocol") not in (PROTOCOL_TASK, PROTOCOL_PROGRESS):
         raise AtwError(
             UNSUPPORTED_PROTOCOL,
-            f"不支持的协议版本: {data.get('protocol')!r}（期望 {PROTOCOL_TASK}）",
+            f"不支持的协议版本: {data.get('protocol')!r}（支持 {PROTOCOL_TASK}, {PROTOCOL_PROGRESS}）",
         )
     try:
-        model = _REQUEST_ADAPTER.validate_python(data)
+        model = validate_request_dict(data)
     except ValidationError as exc:
         raise AtwError(SCHEMA_VALIDATION_FAILED, _compact_errors(exc)) from exc
     return model, data

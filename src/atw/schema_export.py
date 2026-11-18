@@ -16,7 +16,7 @@ from typing import Any
 
 from pydantic import TypeAdapter
 
-from atw.models.task import Receipt, TaskRequest
+from atw.models.task import ProgressTaskRequest, Receipt, TaskRequest
 
 
 def _locate_schema_dir() -> Path:
@@ -61,8 +61,15 @@ def _receipt_schema() -> dict[str, Any]:
 
 
 def schemas() -> dict[str, dict[str, Any]]:
+    progress = TypeAdapter(ProgressTaskRequest).json_schema()
+    progress.update({
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "$id": "https://atw.local/schemas/task-v1.1.schema.json",
+        "title": "ATW task request with progress (atw.task.v1.1)",
+    })
     return {
         "task-v1.schema.json": _task_schema(),
+        "task-v1.1.schema.json": progress,
         "receipt-v1.schema.json": _receipt_schema(),
     }
 

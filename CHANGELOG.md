@@ -3,6 +3,13 @@
 All notable changes to Agent Task Watcher (ATW) are documented here.
 Format follows Keep a Changelog; versioning follows Semantic Versioning.
 
+## [1.1.0]
+
+- Added one-command task handoff, prepared-request submission and recovery by request ID.
+- Added versioned CSV and weighted queue progress with attempt-aware reports.
+- Added compact DingTalk progress updates and live service protocol discovery.
+- Fixed conflicting requests overwriting canonical receipts and handoff time replacing run start.
+
 ## [1.0.0] — 2026-11-10
 
 ### Added

@@ -3,7 +3,7 @@ name: atw-task-handoff
 description: Hand a long-running CPU/GPU compute task to Agent Task Watcher (ATW) over SSH. Use when an AI agent has started (or is about to start) a task on a remote Linux/Windows host and must exit the session while ATW supervises and sends DingTalk notifications.
 ---
 
-# ATW Task Handoff (V1)
+# ATW Task Handoff (1.1)
 
 Use this Skill when the user wants a long-running compute task (simulation,
 training, test) to be supervised by ATW after the AI session ends. ATW only
@@ -11,13 +11,12 @@ training, test) to be supervised by ATW after the AI session ends. ATW only
 process. The AI/external program starts the task independently of the SSH
 session.
 
-## 0. Mandatory one-time path question
+## 0. Resolve actual run paths
 
-On **every invocation**, before generating JSON, ask the user exactly once:
-
-> 本次任务的日志路径和结果输出路径分别是什么？两项都可留空或回复“默认”，未指定项由 AI 按项目结构自行确定，并写入监控 JSON。
-
-Do not ask a second path question in the same invocation.
+For an existing run, reuse the real log and result paths from its launch command,
+configuration or artifacts. Use paths the user supplied when they match the run.
+Ask a single focused question only when a required fact cannot be established.
+For a new run you launch, derive the paths from its actual configuration.
 
 Interpretation:
 
@@ -54,7 +53,47 @@ propose the minimal correction.
 5. Determine the actual completion/failure markers and result files. Do not
    weaken rules just to obtain a SUCCESS notification.
 
-## 2. Build the AFHP/1 JSON
+## 2. Prefer single-command handoff on the compute node
+
+Check `atw status --json` on B using the service's home/config and account.
+The running service advertises `atw.task.v1.1` under `active_protocols` when it
+supports progress. Choose a stable request ID before invoking SSH and save the
+prepared request in the run directory. Use the real project's success marker.
+
+```bash
+atw handoff --task-id yolo-s07 --request-id req-yolo-s07-01 \
+  --name 'UAV-YOLO S07' --pid 12345 --run-dir /runs/s07 \
+  --log /runs/s07/train.log --result /runs/s07/best.pt \
+  --success-log '<actual completion marker>' \
+  --progress-csv /runs/s07/results.csv --progress-column epoch \
+  --counter-base 1 --total 200 --unit epoch \
+  --request-out /runs/s07/atw-request.json --wait 30 --json
+```
+
+- Select progress explicitly on every handoff. Use the run's real CSV column,
+  total and counter base, or use `--progress-plan /absolute/progress-plan.json`
+  for a queue. Use `--progress-unknown '<reason>'` only when reliable counting
+  is unavailable. Keep the name stable and put counters in the progress source.
+- For a queue, declare all planned item IDs, total, unit, weight and required
+  status in the manifest. Bind a queue root whose lifetime represents this run.
+  Each item has a dedicated report path and one writer. Use
+  `atw progress report --plan PLAN --item S07 --attempt 1 --state queued`
+  for positively known queued items. Report real state and completed counters as
+  they change. An item may read its counter from an existing CSV. Give retries
+  the same item ID, a higher attempt and separate CSVs when applicable. Report
+  acceptance only after the project's validation. ATW computes weighted
+  execution and independent acceptance totals.
+- Supply `--run-started-at` in timezone-aware ISO 8601 when process creation
+  does not represent the start of this run. A dedicated process can use its
+  creation time. Use `--dry-run` to validate the source and preview a sample.
+- For custom success/failure rule trees, prepare the declarative request and
+  use `atw submit FILE --wait 30 --json`. On timeout, check the same request ID
+  and replay the saved request with `atw submit` if needed.
+- A node without progress support keeps its existing AFHP/1 monitoring. Report
+  that progress requires an upgraded service, and use the existing handoff flow
+  below when supervision is needed on that node.
+
+## 3. Legacy AFHP/1 builder and delivery
 
 The helper in this Skill directory generates a valid request (stdlib only;
 optional local validation when `atw` is importable):
@@ -78,14 +117,16 @@ Path rules:
 - If omitted, defaults are `<project-dir>/runs/<task-id>/run.log` and
   `<project-dir>/runs/<task-id>/results/result.csv`.
 - `--ensure-dirs` creates only directories, never an empty result file.
-- `run_started_at` is the real launch time (defaults to now, UTC).
+- Supply `--run-started-at` when the real launch time differs from the bound
+  process creation time. With PID, the builder uses its given creation time
+  by default. With process match and no known start time, it leaves it unset.
 - `expires_at` defaults to now + 60 minutes; an unaccepted request expires, an
   accepted task is not affected by request expiry.
 
 Review the JSON fields (PID, create time, paths, success/failure markers) before
 delivery.
 
-## 3. Deliver atomically to B
+### Deliver atomically to B
 
 ATW scans `$ATW_HOME/tasks/inbox/` for complete `*.json` files. The file name
 stem **must equal** `request_id`.

@@ -2,6 +2,9 @@
 
 Target: Windows 10/11, Python >= 3.11, Task Scheduler.
 
+ATW 1.1 handoff commands, progress configuration, and compatibility checks
+are in [Agent handoff and progress](agent-progress.md).
+
 ATW runs as a **user** task in the current user's security context. It does not
 need a Windows service, a port, or administrator rights for normal operation.
 

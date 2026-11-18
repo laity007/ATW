@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import sqlite3
 from collections.abc import Iterable
 from datetime import datetime
@@ -26,6 +27,14 @@ class Repository:
     # ------------------------------------------------------------------ requests
     def get_request(self, request_id: str) -> sqlite3.Row | None:
         return self.db.query_one("SELECT * FROM requests WHERE request_id=?", (request_id,))
+
+    def get_request_for_file(self, request_id: str) -> sqlite3.Row | None:
+        row = self.get_request(request_id)
+        if row is None and os.name == "nt":
+            return self.db.query_one(
+                "SELECT * FROM requests WHERE request_id=? COLLATE NOCASE LIMIT 1", (request_id,)
+            )
+        return row
 
     def insert_request(
         self,

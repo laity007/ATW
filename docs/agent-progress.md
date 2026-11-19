@@ -39,7 +39,7 @@ atw progress report --plan /runs/batch/progress-plan.json --item S08 --attempt 1
 
 - `atw.task.v1.1` 在注册请求中允许顶层 `progress`。配置类型为 `csv` 或 `queue`。原始 AFHP JSON 中的路径使用节点绝对路径，CLI 可把清单中的相对路径转换为绝对路径。源文件必须位于本次运行目录和读路径白名单内。新版沿用 `atw.receipt.v1`。
 - 更新使用原 revision 检查。`changes.progress` 缺省时沿用，显式 `null` 移除，对象替换原配置。可用 `atw submit` 提交更新 JSON。
-- Linux 和 Windows 升级沿用各自部署方式。先在独立 ATW_HOME 验收，备份原数据库并保留已知可用的安装包。验证旧任务、原回执和待发通知再启用新版交接。回退前停止新版投递并核对尚未消费的新版请求，原 AFHP/1 模式可继续使用。 [Linux wheel 升级](deployment-linux.md#5-verified-wheel-upgrade-and-rollback)
+- Linux 和 Windows 的源码和 wheel 部署使用专用虚拟环境。先在独立 ATW_HOME 验收，备份原数据库并保留已知可用的安装包。验证旧任务、原回执和待发通知再启用新版交接。回退前停止新版投递并核对尚未消费的新版请求，原 AFHP/1 模式可继续使用。 [Linux wheel 升级](deployment-linux.md#5-verified-wheel-upgrade-and-rollback) · [Windows 部署](deployment-windows.md)
 
 ## 1.1.0 验收记录
 

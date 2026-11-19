@@ -52,6 +52,9 @@ jobs:
         run: |
           python -m PyInstaller packaging/atw.spec --noconfirm --distpath dist/${{ matrix.artifact }} --workpath build/pyinstaller
           if [ -f "dist/${{ matrix.artifact }}/atw.exe" ]; then ./dist/${{ matrix.artifact }}/atw.exe --version; else ./dist/${{ matrix.artifact }}/atw --version; fi
+      - name: Build Python wheel
+        if: runner.os == 'Linux'
+        run: python -m pip wheel --no-deps --wheel-dir dist/${{ matrix.artifact }} .
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.artifact }}
@@ -66,6 +69,13 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           path: release-assets
+      - name: Generate release checksums
+        shell: bash
+        run: |
+          find release-assets -type f -print0 | sort -z | while IFS= read -r -d '' asset; do
+            (cd "$(dirname "$asset")" && sha256sum "$(basename "$asset")")
+          done > SHA256SUMS
+          mv SHA256SUMS release-assets/
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:

@@ -29,6 +29,9 @@ The Linux runtime was uploaded offline as python-build-standalone
 manylinux2014/20261026 wheel set (pydantic-core 2.50.4, psutil 7.2.2,
 PyYAML 6.0.3, etc.). Source was run with the standalone interpreter; no system
 Python upgrade and no root service installation.
+This records the original acceptance setup. Current source and wheel
+deployments use a dedicated venv, including on hosts with a standalone base
+runtime. See [Linux deployment](deployment-linux.md#2-offline--no-internet-hosts).
 
 ## 2. Test summary
 

@@ -43,16 +43,33 @@ ATW 是一个**零大模型调用**的本地计算任务监督程序。AI Agent 
 
 ### 1. 安装（源码版）
 
+源码和 wheel 安装都要求使用 **ATW 专用 Python 虚拟环境（Python >= 3.11）**。
+用虚拟环境里的 Python 执行 `-m pip`。后台服务也必须指向该解释器的绝对路径。
+单文件可执行版可直接运行。
+
+Linux：
+
 ```bash
 git clone https://github.com/laity007/ATW.git agent-task-watcher
 cd agent-task-watcher
-python -m venv .venv
-. .venv/bin/activate            # Windows: .venv\Scripts\activate
-pip install -e .
-atw doctor
+python3 -m venv .venv
+.venv/bin/python -m pip install -e .
+.venv/bin/python -m atw doctor
 ```
 
-Python 要求 **>= 3.11**。
+Windows PowerShell：
+
+```powershell
+git clone https://github.com/laity007/ATW.git agent-task-watcher
+Set-Location agent-task-watcher
+py -3.12 -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -e .
+.\.venv\Scripts\python.exe -m atw doctor
+```
+
+下文的 `atw` 命令可在激活虚拟环境后执行，也可使用该环境的 `python -m atw`。
+离线安装与已有服务迁移见 [Linux 部署](docs/deployment-linux.md) 和
+[Windows 部署](docs/deployment-windows.md)。
 
 ### 2. 初始化配置
 

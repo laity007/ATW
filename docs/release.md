@@ -53,9 +53,12 @@ the CI assets because they were built on the acceptance hosts:
 
 ## Build from source
 
+Build locally in an ATW virtual environment on the target platform.
+
 Windows:
 
 ```powershell
+py -3.12 -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -e ".[dev]"
 .\packaging\build.ps1
 ```
@@ -64,9 +67,8 @@ Linux:
 
 ```bash
 python3 -m venv .venv
-. .venv/bin/activate
-pip install -e ".[dev]"
-./packaging/build.sh
+.venv/bin/python -m pip install -e ".[dev]"
+PATH="$PWD/.venv/bin:$PATH" ./packaging/build.sh
 ```
 
 CI: [`.github/workflows/release.yml`](../.github/workflows/release.yml) runs the

@@ -3,50 +3,95 @@
 Target: Ubuntu 22.04/Debian, Python >= 3.11, systemd. ATW runs as a **user**
 service, never root.
 
+Source and wheel deployments require a dedicated Python virtual environment.
+Run `-m pip` through its interpreter and use the absolute path to that
+interpreter in `ExecStart`. The one-file executable can run directly.
+
 ## 1. Source installation (with internet)
 
 ```bash
 git clone <repo> agent-task-watcher
 cd agent-task-watcher
 python3 -m venv .venv
-. .venv/bin/activate
-pip install -e .
-atw doctor
+.venv/bin/python -m pip install -e .
+.venv/bin/python -m atw doctor
 ```
 
-The `install.sh` helper creates a venv at `$ATW_HOME/venv` by default:
+The `install.sh` helper creates a venv at `$ATW_HOME/venv` by default. Install
+the venv component for your chosen Python if needed. On hosts where
+`python3` is older than 3.11, pass an absolute path to a supported interpreter
+with `--python`.
 
 ```bash
-sudo apt-get install -y python3-venv    # once, if needed
 ATW_HOME="$HOME/.local/share/atw" deploy/linux/install.sh
 ```
 
-Use `--no-install` when ATW is already importable by the chosen interpreter
-(e.g. an offline standalone Python):
+Use `--no-install` with a virtual environment that already has ATW installed:
 
 ```bash
 ATW_HOME="$HOME/.local/share/atw" \
-ATW_PYTHON="$HOME/atw-runtime/python/bin/python3" \
-deploy/linux/install.sh --no-install --enable-linger
+ATW_PYTHON="$HOME/.local/share/atw/venv/bin/python" \
+deploy/linux/install.sh --no-install
 ```
 
 ## 2. Offline / no-internet hosts
 
-The acceptance host had system Python 3.10 and no outbound internet. The tested
-recipe:
+On a connected workstation, prepare the ATW wheel and its dependency wheels
+for the target OS, architecture and Python version. For Linux x86_64 with
+Python 3.12, choose compatible manylinux wheels. If the host's system Python
+is too old, upload a standalone Python runtime with `venv` and `ensurepip`
+support. Use that runtime to create the ATW virtual environment.
 
-1. On a Windows/macOS workstation with internet, download an official
-   python-build-standalone **Linux x86_64** runtime (Python 3.12) and a matching
-   manylinux wheel set (`pip download --platform manylinux2014_x86_64
-   --python-version 3.12 --only-binary=:all:`).
-2. Upload/extract the runtime to `~/atw-runtime`.
-3. `python -m pip install --no-index --find-links wheels agent-task-watcher`
-   (or upload the source tree and run with `PYTHONPATH=src`).
-4. Run `install.sh --no-install` with `ATW_PYTHON` pointing at the standalone
-   interpreter.
+```bash
+ATW_HOME="$HOME/.local/share/atw"
+BASE_PYTHON="$HOME/atw-runtime/python/bin/python3"
+WHEELHOUSE="$HOME/atw-runtime/wheels"
+ATW_WHEEL="$WHEELHOUSE/agent_task_watcher-1.1.0-py3-none-any.whl"
 
-The runtime/wheel hashes and versions used in the V1 acceptance run are in
-[`acceptance.md`](acceptance.md).
+"$BASE_PYTHON" -m venv "$ATW_HOME/venv"
+ATW_PYTHON="$ATW_HOME/venv/bin/python"
+"$ATW_PYTHON" -m pip install --no-index --find-links "$WHEELHOUSE" "$ATW_WHEEL"
+"$ATW_PYTHON" -m pip check
+"$ATW_PYTHON" -m atw --version
+ATW_HOME="$ATW_HOME" ATW_PYTHON="$ATW_PYTHON" deploy/linux/install.sh --no-install
+```
+
+Adjust the three source paths to your uploaded runtime and wheel files.
+Subsequent package installs and upgrades use the venv interpreter.
+
+### Migrate an existing service to a venv
+
+Create and verify the venv before restarting ATW. Follow the offline commands
+through `atw --version` and skip the installer command. Use the wheel for the
+currently running ATW version so the interpreter switch and a package upgrade
+can be verified separately. Keep the existing `ATW_HOME` and configuration.
+
+Review the current `ExecStart` with
+`systemctl --user show atw.service -p ExecStart`. Create a dedicated drop-in
+under `~/.config/systemd/user/atw.service.d/`, for example
+`90-atw-venv.conf`. Reset `ExecStart` and repeat the original command with
+only the interpreter path replaced. Keep any existing `--home` and
+`--config` arguments. For the default home the drop-in looks like:
+
+```ini
+[Service]
+ExecStart=
+ExecStart=%h/.local/share/atw/venv/bin/python -m atw --home %h/.local/share/atw service run
+```
+
+Reload and restart the user unit, then check its status and command:
+
+```bash
+systemctl --user daemon-reload
+systemctl --user restart atw.service
+systemctl --user is-active atw.service
+systemctl --user show atw.service -p ExecStart
+"$ATW_PYTHON" -m atw --home "$ATW_HOME" status --json
+```
+
+Verify the running service, its task state, and fresh observations for any
+previously monitored tasks. To roll back the interpreter switch, remove the
+migration drop-in you added, reload systemd and restart the service.
 
 ## 3. Configuration
 
@@ -184,12 +229,13 @@ resend the accepted notification.
 
 ## 5. Verified wheel upgrade and rollback
 
-Run the upgrade as the user who owns the active ATW systemd unit. Provide the
-target wheel and the exact known-good wheel currently installed in the unit's
-Python environment. Keep wheel files from each release so you can use the
-same procedure again. The helper works offline with the environment's existing
-dependencies and can run under system Python 3.10 or later. The service
-interpreter still requires Python 3.11 or later. The helper supports one
+Run the upgrade as the user who owns the active ATW systemd unit, after that
+unit uses the dedicated venv. Provide the target wheel and the exact known-good
+wheel currently installed in the venv. Keep wheel files from each release.
+The helper works offline with the venv's existing dependencies. The system
+Python can run the helper (3.10 or later). The helper installs ATW into the
+interpreter in `ExecStart`, which must be the ATW venv with Python 3.11 or later.
+It supports one
 `<python> -m atw --home <path> [--config <path>] service run` unit. Its default
 is `atw.service`. The helper also honors `ATW_CONFIG` from the running service
 when the unit omits `--config`.

@@ -37,16 +37,9 @@ propose the minimal correction.
    definition and expected runtime.
 2. The compute process must be independent of the SSH session (nohup/systemd/
    scheduler/`setsid`/Windows detached process, as appropriate).
-3. Obtain the **root PID and exact create time** on B:
-   ```bash
-   python - <<'PY'
-   import psutil
-   p = psutil.Process(<PID>)
-   print(p.pid, repr(p.create_time()), p.name())
-   print(" ".join(p.cmdline()))
-   PY
-   ```
-   `create_time` must come from psutil on B, not from the AI's local clock.
+3. Supply the root PID on B. `atw handoff` reads and verifies the process
+   creation time. If you already have a trusted creation time recorded on B
+   for this run, pass it as `--create-time`.
 4. If a PID cannot be identified reliably, use `target.kind=match` with the
    process name and **all** distinguishing command-line fragments. `match` is
    only accepted when exactly one process matches; never guess.
@@ -55,10 +48,9 @@ propose the minimal correction.
 
 ## 2. Prefer single-command handoff on the compute node
 
-Check `atw status --json` on B using the service's home/config and account.
-The running service advertises `atw.task.v1.1` under `active_protocols` when it
-supports progress. Choose a stable request ID before invoking SSH and save the
-prepared request in the run directory. Use the real project's success marker.
+Run `atw handoff` directly on B with the service's home/config and account.
+Choose a stable request ID before invoking SSH and save the prepared request
+in the run directory. Use the real project's success marker.
 
 ```bash
 atw handoff --task-id yolo-s07 --request-id req-yolo-s07-01 \
@@ -89,14 +81,25 @@ atw handoff --task-id yolo-s07 --request-id req-yolo-s07-01 \
 - For custom success/failure rule trees, prepare the declarative request and
   use `atw submit FILE --wait 30 --json`. On timeout, check the same request ID
   and replay the saved request with `atw submit` if needed.
-- A node without progress support keeps its existing AFHP/1 monitoring. Report
-  that progress requires an upgraded service, and use the existing handoff flow
-  below when supervision is needed on that node.
+- For an explicit install or upgrade request, a missing ATW command, an
+  unavailable service, or `UNSUPPORTED_PROTOCOL`, see
+  [deployment and recovery](references/deployment.md).
 
 ## 3. Legacy AFHP/1 builder and delivery
 
 The helper in this Skill directory generates a valid request (stdlib only;
 optional local validation when `atw` is importable):
+
+For a legacy PID request, obtain the exact creation time from psutil on B
+and pass it as `--create-time`:
+
+```bash
+python - <<'PY'
+import psutil
+p = psutil.Process(12345)  # Replace with the root PID.
+print(p.pid, repr(p.create_time()))
+PY
+```
 
 ```bash
 python skills/atw-task-handoff/scripts/build_task_json.py \
@@ -147,7 +150,11 @@ Windows B (PowerShell), use `scp`/`Copy-Item` to a `.tmp` then
 Never put a DingTalk webhook or secret in the task JSON. The task JSON is
 declarative and read-only; ATW will reject shell/code injection attempts.
 
-## 4. Verify the receipt — mandatory
+## 4. Use the receipt
+
+Use the receipt returned by a successful `handoff --wait 30 --json` directly.
+Query the receipt separately for legacy file delivery or when submission times
+out. For a timeout, use the original request ID and retain the prepared request.
 
 ```bash
 ssh B 'atw receipt <request_id> --wait 30 --json'
@@ -164,8 +171,8 @@ Success is **all** of:
 For `target.kind=match`, the accepted receipt contains the actual selected
 PID + create time; record and check them.
 
-If `status == "rejected"` or the command times out (`RECEIPT_TIMEOUT`, nonzero
-exit code):
+After a rejection or a timeout that remains unresolved after querying the
+original request ID:
 - report the exact error code/message to the user;
 - keep the compute process running;
 - do **not** claim monitoring was taken over;

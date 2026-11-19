@@ -10,17 +10,27 @@ need a Windows service, a port, or administrator rights for normal operation.
 
 ## 1. Source installation
 
+Source and wheel deployments require a dedicated Python virtual environment.
+Run `-m pip` through its interpreter and point Task Scheduler to that
+interpreter. The one-file executable can run directly.
+
 ```powershell
 git clone <repo> agent-task-watcher
 cd agent-task-watcher
 py -3.12 -m venv .venv
-.\.venv\Scripts\activate
-pip install -e .
-atw doctor
+.\.venv\Scripts\python.exe -m pip install -e .
+.\.venv\Scripts\python.exe -m atw doctor
 ```
 
-Use an absolute interpreter path in the scheduled task; do not rely on PATH
-being present in the Task Scheduler environment.
+For a wheel deployment, install the wheel using the same venv interpreter:
+
+```powershell
+.\.venv\Scripts\python.exe -m pip install 'C:\path\to\agent_task_watcher-1.1.0-py3-none-any.whl'
+.\.venv\Scripts\python.exe -m pip check
+```
+
+Use the absolute venv interpreter path in the scheduled task. Run the
+`atw` commands below from an activated venv or use its `python.exe -m atw`.
 
 ## 2. Configuration
 
@@ -85,6 +95,13 @@ current user is allowed. It configures:
   directory = project root;
 - restart on failure every minute, unlimited execution time, `IgnoreNew`
   multiple-instance policy, start when available, no battery stop.
+
+To migrate an existing task, install its current ATW version in the venv and
+verify `python.exe -m atw --version` through that interpreter before switching.
+Update the task action to use the venv's `python.exe` and preserve its
+`--home`, configuration, account and trigger. Restart the scheduled task
+and verify its status and any previously monitored tasks. The old task action
+can be restored if the interpreter switch fails.
 
 Verify:
 
